@@ -104,7 +104,7 @@ def pindahkan_data_ke_sheet_baru(client):
     pisahkan ke sheet Pendapatan dan Pengeluaran_YYYY_MM.
     """
     try:
-        spreadsheet = client.open_by_key(SPREADSHEET_ID)
+        spreadsheet = client.open("Database_Keuangan Baru (Jawaban)")
 
         # Baca sheet lama
         try:
@@ -152,7 +152,7 @@ def hapus_baris(nama_sheet, nomor_baris):
         client = get_gsheet_client()
         if not client:
             return False, "Service account belum dikonfigurasi"
-        spreadsheet = client.open_by_key(SPREADSHEET_ID)
+        spreadsheet = client.open("Database_Keuangan Baru (Jawaban)")
         sheet = spreadsheet.worksheet(nama_sheet)
         sheet.delete_rows(nomor_baris)
         return True, "Berhasil"
@@ -160,21 +160,23 @@ def hapus_baris(nama_sheet, nomor_baris):
         return False, str(e)
 
 def tambah_transaksi_ke_sheet(jenis, kategori, jumlah, catatan):
-    """Tambah transaksi langsung ke sheet yang sesuai via API."""
+    """Tambah transaksi langsung ke sheet Form_Responses via API."""
     try:
         client = get_gsheet_client()
         if not client:
             return False, "Service account belum dikonfigurasi"
-        spreadsheet = client.open_by_key(SPREADSHEET_ID)
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        spreadsheet = client.open("Database_Keuangan Baru (Jawaban)")
+        timestamp = datetime.now().strftime('%m/%d/%Y %H:%M:%S')
 
-        if jenis == 'Pendapatan':
-            sheet = get_or_create_sheet(spreadsheet, "Pendapatan")
-        else:
-            nama_sheet = f"Pengeluaran_{datetime.now().strftime('%Y_%m')}"
-            sheet = get_or_create_sheet(spreadsheet, nama_sheet)
+        # Tulis langsung ke Form_Responses di spreadsheet baru
+        try:
+            sheet = spreadsheet.worksheet("Form_Responses")
+        except:
+            # Buat sheet baru jika belum ada
+            sheet = spreadsheet.add_worksheet(title="Form_Responses", rows=1000, cols=10)
+            sheet.append_row(["Timestamp", "Jenis", "Kategori", "Jumlah", "Catatan"])
 
-        sheet.append_row([timestamp, kategori, jumlah, catatan])
+        sheet.append_row([timestamp, jenis, kategori, jumlah, catatan])
         return True, "Berhasil"
     except Exception as e:
         return False, str(e)
@@ -186,7 +188,7 @@ def update_rekap_bulanan(client=None):
             client = get_gsheet_client()
         if not client:
             return
-        spreadsheet = client.open_by_key(SPREADSHEET_ID)
+        spreadsheet = client.open("Database_Keuangan Baru (Jawaban)")
         semua_sheet = [s.title for s in spreadsheet.worksheets()]
         sheet_pengeluaran = sorted([s for s in semua_sheet if s.startswith("Pengeluaran_")])
 
@@ -231,7 +233,7 @@ def muat_semua_data():
             scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
             creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
             client = gspread.authorize(creds)
-            spreadsheet = client.open_by_key(SPREADSHEET_ID)
+            spreadsheet = client.open("Database_Keuangan Baru (Jawaban)")
             semua_sheet = [s.title for s in spreadsheet.worksheets()]
 
             # Baca Pendapatan
@@ -723,47 +725,16 @@ with st.form("form_keuangan", clear_on_submit=True):
 if tombol_simpan:
     if input_jumlah > 0:
         with st.spinner("Menyimpan ke database..."):
-            hasil_api = False
-            hasil_form = False
-            pesan_api = ""
-
-            # JALUR 1: Simpan langsung ke sheet baru via API (utama)
-            ok_api, pesan_api = tambah_transaksi_ke_sheet(
+            ok, pesan = tambah_transaksi_ke_sheet(
                 pilihan_jenis, pilihan_kategori, input_jumlah, input_catatan
             )
-            if ok_api:
-                hasil_api = True
-
-            # JALUR 2: Kirim ke Google Form sekaligus (backup/sinkron)
-            try:
-                payload = {
-                    "submit": "Submit",
-                    "entry.171028022": pilihan_jenis,
-                    "entry.1723834692": pilihan_kategori,
-                    "entry.674028951": input_jumlah,
-                    "entry.1977277942": input_catatan
-                }
-                requests.post(FORM_URL, data=payload, timeout=10)
-                hasil_form = True
-            except:
-                hasil_form = False
-
-        if hasil_api and hasil_form:
+        if ok:
             st.cache_data.clear()
-            st.success("✅ Tersimpan ke sheet baru & Google Form!")
+            st.success("✅ Transaksi berhasil disimpan!")
             st.balloons()
             st.rerun()
-        elif hasil_api and not hasil_form:
-            st.cache_data.clear()
-            st.success("✅ Tersimpan ke sheet baru!")
-            st.warning("⚠️ Google Form tidak merespons, tapi data sudah aman.")
-            st.rerun()
-        elif not hasil_api and hasil_form:
-            st.cache_data.clear()
-            st.warning(f"⚠️ Sheet baru gagal ({pesan_api}), tersimpan di Google Form.")
-            st.info("Jalankan Migrasi di tab Pengaturan untuk memindahkan data.")
-            st.rerun()
         else:
-            st.error("❌ Gagal menyimpan ke semua jalur. Cek koneksi internet.")
+            st.error(f"❌ Gagal menyimpan: {pesan}")
+            st.info("Pastikan Service Account aktif dan spreadsheet sudah di-share ke email service account.")
     else:
         st.error("⚠️ Nominal harus lebih dari Rp 0!")
