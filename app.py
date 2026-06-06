@@ -13,7 +13,7 @@ import json
 # =================================================================
 DATA_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vREdDOrXtztLOHd-Km9QDgjjjhzbmMS7J5VYlgknK9Y5Rm47Yf0nHey-Gt3MBiADuUQRtVagLIG1w8h/pub?gid=535445139&single=true&output=csv"
 SPREADSHEET_ID = "13cCNY4oFDgGKimLgLRRiz0RLTCiy8z_qkeD5mtNmxKM"
-SHEET_NAME = "Form_Responses"
+SHEET_NAME = "Form Responses 1"
 
 st.set_page_config(page_title="Dompetku Premium", page_icon="💰", layout="wide")
 
@@ -399,4 +399,3 @@ if tombol_simpan:
                 st.error(f"❌ Gagal mengirim. Error: {e}")
     else:
         st.error("⚠️ Nominal uang harus lebih besar dari Rp 0!")
-
