@@ -9,7 +9,7 @@ import plotly.express as px
 # =================================================================
 # ID Spreadsheet Anda (Membaca data dari Google Sheets Anda yang di-share publik)
 SPREADSHEET_ID = "1LoC_moM3dZDhLzhy7dfbWKZVq5fuplWjMEh-9IEUQE8" 
-DATA_URL = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&gid=0"
+DATA_URL = f"https://docs.google.com/spreadsheets/d/1LoC_moM3dZDhLzhy7dfbWKZVq5fuplWjMEh-9IEUQE8/gviz/tq?tqx=out:csv&gid=0"
 
 st.set_page_config(page_title="Dompetku Mandiri", page_icon="💰", layout="centered")
 st.title("💰 Dompetku Pro V2")
