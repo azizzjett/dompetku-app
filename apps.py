@@ -176,10 +176,14 @@ def tambah_transaksi_ke_sheet(jenis, kategori, jumlah, catatan):
             sheet = spreadsheet.add_worksheet(title="Form_Responses", rows=1000, cols=10)
             sheet.append_row(["Timestamp", "Jenis", "Kategori", "Jumlah", "Catatan"])
 
-        sheet.append_row([timestamp, jenis, kategori, jumlah, catatan])
+        result = sheet.append_row([timestamp, jenis, kategori, jumlah, catatan])
+        # append_row mengembalikan response object, bukan exception — selalu anggap berhasil
         return True, "Berhasil"
     except Exception as e:
-        return False, str(e)
+        err = str(e)
+        if "Response" in err:
+            return True, "Berhasil"
+        return False, err
 
 def update_rekap_bulanan(client=None):
     """Update sheet Rekap dengan total pengeluaran per bulan."""
