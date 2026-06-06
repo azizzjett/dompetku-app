@@ -11,8 +11,8 @@ import hashlib
 # =================================================================
 # 1. KONFIGURASI UTAMA
 # =================================================================
-DATA_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vREdDOrXtztLOHd-Km9QDgjjjhzbmMS7J5VYlgknK9Y5Rm47Yf0nHey-Gt3MBiADuUQRtVagLIG1w8h/pub?gid=535445139&single=true&output=csv"
-SPREADSHEET_ID = "13cCNY4oFDgGKimLgLRRiz0RLTCiy8z_qkeD5mtNmxKM"
+DATA_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQeeKABS1WormMJdnNTeYTKUEw2F14XEqh3o7AqdhrPc2XE110V9gh--sPV2WAn5viJHIkjtPu_sD6H/pub?gid=535445139&single=true&output=csv"
+SPREADSHEET_ID = "1yFdjwqVBc5Eu-axzeUHWYwZXmUuTYgGlQza1crm6TiQ"
 FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSeRTFqYWhRkGMwvBvUqsgz7RWfQUw36JuLuPjcdnGnu09-9ug/formResponse"
 
 st.set_page_config(page_title="Dompetku Premium", page_icon="💰", layout="wide")
