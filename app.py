@@ -1,27 +1,34 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from streamlit_gsheets import GSheetsConnection
+import requests # Digunakan untuk menembak data ke Google Form
 import plotly.express as px
 
-# 1. ATUR TAMPILAN MOBILE
-st.set_page_config(page_title="Dompetku Alternatif", page_icon="💰", layout="centered")
-st.title("💰 Dompetku GSheets")
-st.caption("Versi Simpel Tanpa File Credentials JSON")
+# =================================================================
+# 1. KONFIGURASI UTAMA & DATABASE
+# =================================================================
+# ID Spreadsheet Anda (Sudah benar sesuai file Anda)
+SPREADSHEET_ID = "1LoC_moM3dZDhLzhy7dfbWKZVq5fuplWjMEh-9IEUQE8" 
+
+# URL Publik untuk MEMBACA data (Membaca data tidak diblokir oleh Google)
+DATA_URL = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&gid=0"
+
+# Atur tampilan layar HP
+st.set_page_config(page_title="Dompetku Mandiri", page_icon="💰", layout="centered")
+st.title("💰 Dompetku Pro")
+st.caption("Aplikasi Keuangan Online - Tanpa Error Kredensial")
 st.markdown("---")
 
-# 2. INISIALISASI KONEKSI GSHEETS
-# Streamlit akan otomatis membaca URL dari file .streamlit/secrets.toml
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-# 3. FUNGSI MEMBACA DATA
-@st.cache_data(ttl=5) # Refresh data otomatis tiap 5 detik
+# =================================================================
+# 2. FUNGSI UNTUK MEMBACA DATA
+# =================================================================
+@st.cache_data(ttl=5) # Sinkronisasi data setiap 5 detik
 def muat_data():
     try:
-        # Membaca data dari Sheet1
-        df = conn.read(worksheet="Sheet1", ttl="5s")
-        # Membersihkan baris yang benar-benar kosong jika ada
-        df = df.dropna(subset=['Tanggal', 'Jenis', 'Jumlah'])
+        df = pd.read_csv(DATA_URL)
+        # Jika kolom pertama Google Sheets berubah jadi 'Timestamp' karena Form, kita sesuaikan
+        if 'Timestamp' in df.columns:
+            df = df.rename(columns={'Timestamp': 'Tanggal'})
         df['Tanggal'] = pd.to_datetime(df['Tanggal']).dt.date
         df['Jumlah'] = pd.to_numeric(df['Jumlah'])
         return df
@@ -30,7 +37,9 @@ def muat_data():
 
 df_keuangan = muat_data()
 
-# 4. DASHBOARD RINGKASAN SALDO
+# =================================================================
+# 3. DASHBOARD RINGKASAN SALDO
+# =================================================================
 st.subheader("📊 Ringkasan Saldo")
 if not df_keuangan.empty:
     total_pendapatan = df_keuangan[df_keuangan['Jenis'] == 'Pendapatan']['Jumlah'].sum()
@@ -42,13 +51,14 @@ if not df_keuangan.empty:
     k2.metric("Pengeluaran", f"Rp {total_pengeluaran:,.0f}")
     k3.metric("Sisa Saldo", f"Rp {sisa_saldo:,.0f}")
 else:
-    st.info("Belum ada data transaksi di Google Sheets.")
+    st.info("Belum ada data transaksi terdeteksi di Google Sheets.")
 st.markdown("---")
 
-# 5. FORM INPUT TRANSAKSI BARU (LANGSUNG MASUK)
+# =================================================================
+# 4. FORM INPUT TRANSAKSI BARU
+# =================================================================
 st.subheader("➕ Tambah Transaksi Baru")
 with st.form("form_keuangan", clear_on_submit=True):
-    pilihan_tanggal = st.date_input("Tanggal Transaksi", datetime.now().date())
     pilihan_jenis = st.selectbox("Jenis Transaksi", ["Pengeluaran", "Pendapatan"])
     
     if pilihan_jenis == "Pengeluaran":
@@ -57,43 +67,46 @@ with st.form("form_keuangan", clear_on_submit=True):
         pilihan_kategori = st.selectbox("Kategori", ["Gaji Utama", "Bonus / Proyek", "Investasi", "Pemberian", "Lainnya"])
         
     input_jumlah = st.number_input("Nominal Uang (Rp)", min_value=0, value=0, step=5000)
-    input_catatan = st.text_input("Catatan / Keterangan (Opsional)", placeholder="misal: Beli nasi goreng")
+    input_catatan = st.text_input("Keterangan Tambahan (Opsional)", placeholder="misal: Beli nasi goreng")
     
     tombol_simpan = st.form_submit_button("Simpan Otomatis")
 
+# Logika simpan otomatis mengirim ke Google Form
 if tombol_simpan:
     if input_jumlah > 0:
-        with st.spinner("Menyimpan ke Google Sheets..."):
+        with st.spinner("Sedang menyimpan data ke cloud..."):
             try:
-                # 1. Siapkan data baru dalam bentuk DataFrame
-                data_baru = pd.DataFrame([{
-                    "Tanggal": pilihan_tanggal.strftime("%Y-%m-%d"),
+                # 🛠️ GANTI LINK DI BAWAH INI DENGAN LINK GOOGLE FORM ANDA YANG BERAKHIRAN /formResponse
+                form_url = "https://docs.google.com/forms/d/e/1FAIpQLSfXXXXXXXXXXXXX/formResponse"
+                
+                # Kirim data menggunakan nama teks pertanyaan sebagai Key
+                payload = {
+                    "submit": "Submit",
                     "Jenis": pilihan_jenis,
                     "Kategori": pilihan_kategori,
                     "Jumlah": input_jumlah,
                     "Catatan": input_catatan
-                }])
+                }
                 
-                # 2. Gabungkan data lama dengan data baru
-                df_diperbarui = pd.concat([df_keuangan, data_baru], ignore_index=True)
-                
-                # 3. Tulis ulang ke Google Sheets secara instan
-                conn.update(worksheet="Sheet1", data=df_diperbarui)
+                # Menembak data secara tersembunyi
+                requests.post(form_url, data=payload)
                 
                 st.success("Berhasil disimpan otomatis!")
                 st.balloons()
                 
-                # Clear cache agar langsung memuat data terbaru
+                # Hapus cache agar Streamlit langsung memuat baris data yang baru masuk
                 st.cache_data.clear()
                 st.rerun()
             except Exception as e:
-                st.error(f"Gagal menyimpan data. Pastikan setelan share sudah 'Editor'. Error: {e}")
+                st.error(f"Gagal menyimpan data. Error: {e}")
     else:
         st.error("Gagal menyimpan! Jumlah uang harus lebih besar dari Rp 0.")
 
 st.markdown("---")
 
-# 6. RIWAYAT TRANSAKSI TERAKHIR
+# =================================================================
+# 5. RIWAYAT TRANSAKSI TERAKHIR
+# =================================================================
 st.subheader("📜 5 Transaksi Terakhir")
 if not df_keuangan.empty:
     st.dataframe(df_keuangan.tail(5), use_container_width=True)
@@ -101,7 +114,9 @@ else:
     st.write("Riwayat transaksi masih kosong.")
 st.markdown("---")
 
-# 7. VISUALISASI GRAFIK LINGKARAN
+# =================================================================
+# 6. VISUALISASI GRAFIK LINGKARAN
+# =================================================================
 st.subheader("🍩 Analisis Pengeluaran")
 if not df_keuangan.empty:
     df_pengeluaran = df_keuangan[df_keuangan['Jenis'] == 'Pengeluaran']
