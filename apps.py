@@ -104,7 +104,7 @@ def pindahkan_data_ke_sheet_baru(client):
     pisahkan ke sheet Pendapatan dan Pengeluaran_YYYY_MM.
     """
     try:
-        spreadsheet = client.open("Database_Keuangan Baru (Jawaban)")
+        spreadsheet = client.open_by_key("1yFdjwqVBc5Eu-axzeUHWYwZXmUuTYgGlQza1crm6TiQ")
 
         # Baca sheet lama
         try:
@@ -152,7 +152,7 @@ def hapus_baris(nama_sheet, nomor_baris):
         client = get_gsheet_client()
         if not client:
             return False, "Service account belum dikonfigurasi"
-        spreadsheet = client.open("Database_Keuangan Baru (Jawaban)")
+        spreadsheet = client.open_by_key("1yFdjwqVBc5Eu-axzeUHWYwZXmUuTYgGlQza1crm6TiQ")
         sheet = spreadsheet.worksheet(nama_sheet)
         sheet.delete_rows(nomor_baris)
         return True, "Berhasil"
@@ -162,28 +162,38 @@ def hapus_baris(nama_sheet, nomor_baris):
 def tambah_transaksi_ke_sheet(jenis, kategori, jumlah, catatan):
     """Tambah transaksi langsung ke sheet Form_Responses via API."""
     try:
+        # Step 1: Konek ke gspread
         client = get_gsheet_client()
         if not client:
             return False, "Service account belum dikonfigurasi"
-        spreadsheet = client.open("Database_Keuangan Baru (Jawaban)")
-        timestamp = datetime.now().strftime('%m/%d/%Y %H:%M:%S')
 
-        # Tulis langsung ke Form_Responses di spreadsheet baru
+        # Step 2: Buka spreadsheet by ID
+        try:
+            spreadsheet = client.open_by_key("1yFdjwqVBc5Eu-axzeUHWYwZXmUuTYgGlQza1crm6TiQ")
+        except Exception as e2:
+            return False, f"Gagal buka spreadsheet: {e2}"
+
+        # Step 3: Buka sheet Form_Responses
         try:
             sheet = spreadsheet.worksheet("Form_Responses")
-        except:
-            # Buat sheet baru jika belum ada
-            sheet = spreadsheet.add_worksheet(title="Form_Responses", rows=1000, cols=10)
-            sheet.append_row(["Timestamp", "Jenis", "Kategori", "Jumlah", "Catatan"])
+        except Exception as e3:
+            try:
+                sheet = spreadsheet.add_worksheet(title="Form_Responses", rows=1000, cols=6)
+                sheet.append_row(["Timestamp", "Jenis", "Kategori", "Jumlah", "Catatan"])
+            except Exception as e4:
+                return False, f"Gagal buat sheet: {e4}"
 
-        result = sheet.append_row([timestamp, jenis, kategori, jumlah, catatan])
-        # append_row mengembalikan response object, bukan exception — selalu anggap berhasil
+        # Step 4: Tulis data
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        try:
+            sheet.append_row([timestamp, jenis, kategori, float(jumlah), catatan])
+        except Exception as e5:
+            return False, f"Gagal tulis data: {e5}"
+
         return True, "Berhasil"
+
     except Exception as e:
-        err = str(e)
-        if "Response" in err:
-            return True, "Berhasil"
-        return False, err
+        return False, f"Error tidak terduga: {e}"
 
 def update_rekap_bulanan(client=None):
     """Update sheet Rekap dengan total pengeluaran per bulan."""
@@ -192,7 +202,7 @@ def update_rekap_bulanan(client=None):
             client = get_gsheet_client()
         if not client:
             return
-        spreadsheet = client.open("Database_Keuangan Baru (Jawaban)")
+        spreadsheet = client.open_by_key("1yFdjwqVBc5Eu-axzeUHWYwZXmUuTYgGlQza1crm6TiQ")
         semua_sheet = [s.title for s in spreadsheet.worksheets()]
         sheet_pengeluaran = sorted([s for s in semua_sheet if s.startswith("Pengeluaran_")])
 
@@ -237,7 +247,7 @@ def muat_semua_data():
             scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
             creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
             client = gspread.authorize(creds)
-            spreadsheet = client.open("Database_Keuangan Baru (Jawaban)")
+            spreadsheet = client.open_by_key("1yFdjwqVBc5Eu-axzeUHWYwZXmUuTYgGlQza1crm6TiQ")
             semua_sheet = [s.title for s in spreadsheet.worksheets()]
 
             # Baca Pendapatan
