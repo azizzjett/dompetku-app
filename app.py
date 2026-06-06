@@ -77,7 +77,7 @@ if tombol_simpan:
         with st.spinner("Sedang menyimpan data ke cloud..."):
             try:
                 # 🛠️ GANTI LINK DI BAWAH INI DENGAN LINK GOOGLE FORM ANDA YANG BERAKHIRAN /formResponse
-                form_url = "https://docs.google.com/forms/d/e/1FAIpQLSfXXXXXXXXXXXXX/formResponse"
+                form_url = "https://docs.google.com/forms/d/e/1FAIpQLSeRTFqYWhRkGMwvBvUqsgz7RWfQUw36JuLuPjcdnGnu09-9ug/viewform?usp=dialog"
                 
                 # Kirim data menggunakan nama teks pertanyaan sebagai Key
                 payload = {
