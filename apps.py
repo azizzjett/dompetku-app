@@ -722,30 +722,48 @@ with st.form("form_keuangan", clear_on_submit=True):
 
 if tombol_simpan:
     if input_jumlah > 0:
-        with st.spinner("Menyimpan..."):
-            # Coba via API dulu, fallback ke Google Form
-            ok, msg = tambah_transaksi_ke_sheet(pilihan_jenis, pilihan_kategori, input_jumlah, input_catatan)
-            if not ok:
-                # Fallback Google Form
-                try:
-                    payload = {
-                        "submit": "Submit",
-                        "entry.171028022": pilihan_jenis,
-                        "entry.1723834692": pilihan_kategori,
-                        "entry.674028951": input_jumlah,
-                        "entry.1977277942": input_catatan
-                    }
-                    requests.post(FORM_URL, data=payload, timeout=10)
-                    ok = True
-                except:
-                    ok = False
+        with st.spinner("Menyimpan ke database..."):
+            hasil_api = False
+            hasil_form = False
+            pesan_api = ""
 
-        if ok:
+            # JALUR 1: Simpan langsung ke sheet baru via API (utama)
+            ok_api, pesan_api = tambah_transaksi_ke_sheet(
+                pilihan_jenis, pilihan_kategori, input_jumlah, input_catatan
+            )
+            if ok_api:
+                hasil_api = True
+
+            # JALUR 2: Kirim ke Google Form sekaligus (backup/sinkron)
+            try:
+                payload = {
+                    "submit": "Submit",
+                    "entry.171028022": pilihan_jenis,
+                    "entry.1723834692": pilihan_kategori,
+                    "entry.674028951": input_jumlah,
+                    "entry.1977277942": input_catatan
+                }
+                requests.post(FORM_URL, data=payload, timeout=10)
+                hasil_form = True
+            except:
+                hasil_form = False
+
+        if hasil_api and hasil_form:
             st.cache_data.clear()
-            st.success("✅ Transaksi berhasil disimpan!")
+            st.success("✅ Tersimpan ke sheet baru & Google Form!")
             st.balloons()
             st.rerun()
+        elif hasil_api and not hasil_form:
+            st.cache_data.clear()
+            st.success("✅ Tersimpan ke sheet baru!")
+            st.warning("⚠️ Google Form tidak merespons, tapi data sudah aman.")
+            st.rerun()
+        elif not hasil_api and hasil_form:
+            st.cache_data.clear()
+            st.warning(f"⚠️ Sheet baru gagal ({pesan_api}), tersimpan di Google Form.")
+            st.info("Jalankan Migrasi di tab Pengaturan untuk memindahkan data.")
+            st.rerun()
         else:
-            st.error("❌ Gagal menyimpan transaksi.")
+            st.error("❌ Gagal menyimpan ke semua jalur. Cek koneksi internet.")
     else:
         st.error("⚠️ Nominal harus lebih dari Rp 0!")
