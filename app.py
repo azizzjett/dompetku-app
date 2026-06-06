@@ -1,32 +1,29 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import requests # Digunakan untuk menembak data ke Google Form
+import requests 
 import plotly.express as px
 
 # =================================================================
 # 1. KONFIGURASI UTAMA & DATABASE
 # =================================================================
-# ID Spreadsheet Anda (Sudah benar sesuai file Anda)
+# ID Spreadsheet Anda (Membaca data dari Google Sheets Anda yang di-share publik)
 SPREADSHEET_ID = "1LoC_moM3dZDhLzhy7dfbWKZVq5fuplWjMEh-9IEUQE8" 
-
-# URL Publik untuk MEMBACA data (Membaca data tidak diblokir oleh Google)
 DATA_URL = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&gid=0"
 
-# Atur tampilan layar HP
 st.set_page_config(page_title="Dompetku Mandiri", page_icon="💰", layout="centered")
-st.title("💰 Dompetku Pro")
-st.caption("Aplikasi Keuangan Online - Tanpa Error Kredensial")
+st.title("💰 Dompetku Pro V2")
+st.caption("Aplikasi Keuangan Online - Bebas Error Keamanan")
 st.markdown("---")
 
 # =================================================================
 # 2. FUNGSI UNTUK MEMBACA DATA
 # =================================================================
-@st.cache_data(ttl=5) # Sinkronisasi data setiap 5 detik
+@st.cache_data(ttl=5) 
 def muat_data():
     try:
         df = pd.read_csv(DATA_URL)
-        # Jika kolom pertama Google Sheets berubah jadi 'Timestamp' karena Form, kita sesuaikan
+        # Jika kolom pertama Google Sheets berubah menjadi 'Timestamp' karena Form, kita sesuaikan
         if 'Timestamp' in df.columns:
             df = df.rename(columns={'Timestamp': 'Tanggal'})
         df['Tanggal'] = pd.to_datetime(df['Tanggal']).dt.date
@@ -71,15 +68,15 @@ with st.form("form_keuangan", clear_on_submit=True):
     
     tombol_simpan = st.form_submit_button("Simpan Otomatis")
 
-# Logika simpan otomatis mengirim ke Google Form
+# Logika simpan otomatis mengirim ke Google Form Anda
 if tombol_simpan:
     if input_jumlah > 0:
         with st.spinner("Sedang menyimpan data ke cloud..."):
             try:
-                # 🛠️ GANTI LINK DI BAWAH INI DENGAN LINK GOOGLE FORM ANDA YANG BERAKHIRAN /formResponse
-                form_url = "https://docs.google.com/forms/d/e/1FAIpQLSeRTFqYWhRkGMwvBvUqsgz7RWfQUw36JuLuPjcdnGnu09-9ug/viewform?usp=dialog"
+                # Menggunakan Link Google Form Anda yang sudah diubah ke formResponse
+                form_url = "https://docs.google.com/forms/d/e/1FAIpQLSeRTFqYWhRkGMwvBvUqsgz7RWfQUw36JuLuPjcdnGnu09-9ug/formResponse"
                 
-                # Kirim data menggunakan nama teks pertanyaan sebagai Key
+                # Payload otomatis menggunakan teks nama pertanyaan sebagai kunci akses
                 payload = {
                     "submit": "Submit",
                     "Jenis": pilihan_jenis,
@@ -88,13 +85,13 @@ if tombol_simpan:
                     "Catatan": input_catatan
                 }
                 
-                # Menembak data secara tersembunyi
+                # Menembak data secara tersembunyi ke Google Form
                 requests.post(form_url, data=payload)
                 
                 st.success("Berhasil disimpan otomatis!")
                 st.balloons()
                 
-                # Hapus cache agar Streamlit langsung memuat baris data yang baru masuk
+                # Clear cache agar data terbaru langsung ditarik ke layar aplikasi
                 st.cache_data.clear()
                 st.rerun()
             except Exception as e:
