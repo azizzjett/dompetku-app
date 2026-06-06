@@ -164,40 +164,37 @@ def hapus_baris(nama_sheet, nomor_baris):
         return False, str(e)
 
 def tambah_transaksi_ke_sheet(jenis, kategori, jumlah, catatan):
-    """Tambah transaksi langsung ke sheet Form_Responses via API."""
+    """Tambah transaksi ke sheet yang sesuai berdasarkan jenis."""
     try:
-        # Step 1: Konek ke gspread
         client = get_gsheet_client()
         if not client:
             return False, "Service account belum dikonfigurasi"
 
-        # Step 2: Buka spreadsheet by ID
-        try:
-            spreadsheet = client.open_by_key("1yFdjwqVBc5Eu-axzeUHWYwZXmUuTYgGlQza1crm6TiQ")
-        except Exception as e2:
-            return False, f"Gagal buka spreadsheet: {e2}"
-
-        # Step 3: Buka sheet Form_Responses
-        try:
-            sheet = spreadsheet.worksheet("Form_Responses")
-        except Exception as e3:
-            try:
-                sheet = spreadsheet.add_worksheet(title="Form_Responses", rows=1000, cols=6)
-                sheet.append_row(["Timestamp", "Jenis", "Kategori", "Jumlah", "Catatan"])
-            except Exception as e4:
-                return False, f"Gagal buat sheet: {e4}"
-
-        # Step 4: Tulis data
+        spreadsheet = client.open_by_key("1yFdjwqVBc5Eu-axzeUHWYwZXmUuTYgGlQza1crm6TiQ")
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        try:
-            sheet.append_row([timestamp, jenis, kategori, float(jumlah), catatan])
-        except Exception as e5:
-            return False, f"Gagal tulis data: {e5}"
 
-        return True, "Berhasil"
+        # Tentukan nama sheet berdasarkan jenis transaksi
+        if jenis == "Pendapatan":
+            nama_sheet = "Pendapatan"
+            header = ["Timestamp", "Kategori", "Jumlah", "Catatan"]
+            baris = [timestamp, kategori, float(jumlah), catatan]
+        else:
+            nama_sheet = f"Pengeluaran_{datetime.now().strftime('%Y_%m')}"
+            header = ["Timestamp", "Kategori", "Jumlah", "Catatan"]
+            baris = [timestamp, kategori, float(jumlah), catatan]
+
+        # Buka sheet, buat baru jika belum ada
+        try:
+            sheet = spreadsheet.worksheet(nama_sheet)
+        except gspread.exceptions.WorksheetNotFound:
+            sheet = spreadsheet.add_worksheet(title=nama_sheet, rows=1000, cols=6)
+            sheet.append_row(header)
+
+        sheet.append_row(baris)
+        return True, f"Berhasil disimpan ke sheet {nama_sheet}"
 
     except Exception as e:
-        return False, f"Error tidak terduga: {e}"
+        return False, f"Error: {e}"
 
 def update_rekap_bulanan(client=None):
     """Update sheet Rekap dengan total pengeluaran per bulan."""
@@ -284,26 +281,8 @@ def muat_semua_data():
             return hasil, None
 
         except Exception as e_api:
-            # Fallback: baca dari URL CSV publik (sheet lama)
-            df_lama = pd.read_csv(DATA_URL)
-            if 'Timestamp' in df_lama.columns:
-                df_lama = df_lama.rename(columns={'Timestamp': 'Tanggal'})
-            df_lama['Tanggal'] = pd.to_datetime(df_lama['Tanggal'], errors='coerce')
-            df_lama['Jumlah'] = pd.to_numeric(df_lama.get('Jumlah', 0), errors='coerce').fillna(0)
-            df_lama['_baris_sheet'] = range(2, len(df_lama) + 2)
-
-            hasil["pendapatan"] = df_lama[df_lama.get('Jenis', '') == 'Pendapatan'] if 'Jenis' in df_lama.columns else pd.DataFrame()
-            df_pengeluaran = df_lama[df_lama['Jenis'] == 'Pengeluaran'] if 'Jenis' in df_lama.columns else pd.DataFrame()
-
-            if not df_pengeluaran.empty:
-                df_pengeluaran['Bulan'] = df_pengeluaran['Tanggal'].dt.strftime('%Y_%m')
-                for bulan, grp in df_pengeluaran.groupby('Bulan'):
-                    nama = f"Pengeluaran_{bulan}"
-                    grp = grp.copy()
-                    grp['_nama_sheet'] = nama
-                    hasil["pengeluaran"][nama] = grp
-
-            hasil["sumber"] = "lama"
+            # Jika API gagal, kembalikan data kosong dengan pesan error
+            hasil["sumber"] = "error"
             return hasil, str(e_api)
 
     except Exception as e:
