@@ -77,10 +77,14 @@ if not st.session_state["logged_in"]:
 # =================================================================
 def get_gsheet_client():
     try:
-        scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
         return gspread.authorize(creds)
-    except:
+    except Exception as e:
+        st.error(f"Debug get_gsheet_client: {e}")
         return None
 
 def get_or_create_sheet(spreadsheet, nama_sheet):
