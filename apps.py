@@ -557,15 +557,19 @@ if tombol_simpan:
             nama_file_struk = ""
             if foto_struk is not None:
                 mime = "image/png"
-                ok_foto, hasil_foto, nama_file_struk = upload_struk(
-                    foto_struk.getvalue(), mime,
-                    pilihan_jenis, pilihan_kategori, input_catatan
-                )
-                if ok_foto:
-                    link_struk = hasil_foto
-                    st.success(f"📷 Foto tersimpan: `{nama_file_struk}`")
-                else:
-                    st.warning(f"⚠️ Foto gagal diupload: {hasil_foto}")
+                try:
+                    ok_foto, hasil_foto, nama_file_struk = upload_struk(
+                        foto_struk.getvalue(), mime,
+                        pilihan_jenis, pilihan_kategori, input_catatan
+                    )
+                    if ok_foto:
+                        link_struk = hasil_foto
+                        st.success(f"📷 Foto tersimpan: `{nama_file_struk}`")
+                        st.markdown(f"[🔗 Buka di Google Drive]({link_struk})")
+                    else:
+                        st.error(f"❌ Foto gagal diupload: {hasil_foto}")
+                except Exception as ex:
+                    st.error(f"❌ Error upload foto: {ex}")
             ok, pesan = tambah_transaksi(pilihan_jenis, pilihan_kategori, input_jumlah, input_catatan, link_struk)
         if ok:
             st.cache_data.clear()
