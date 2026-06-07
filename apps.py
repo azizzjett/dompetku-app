@@ -774,9 +774,12 @@ with st.form("form_keuangan", clear_on_submit=True):
     with col_d:
         input_catatan = st.text_input("Keterangan (Opsional)", placeholder="misal: Makan siang")
     
-    # Kamera langsung
+    # Kamera dengan toggle on/off
     st.markdown("📷 **Foto Struk (Opsional)**")
-    foto_struk = st.camera_input("Arahkan kamera ke struk belanja")
+    aktifkan_kamera = st.checkbox("📷 Aktifkan Kamera")
+    foto_struk = None
+    if aktifkan_kamera:
+        foto_struk = st.camera_input("Arahkan kamera ke struk belanja")
 
     tombol_simpan = st.form_submit_button("💾 Simpan Transaksi", use_container_width=True)
 
