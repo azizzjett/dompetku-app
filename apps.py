@@ -560,16 +560,23 @@ if tombol_simpan:
                 try:
                     ok_foto, hasil_foto, nama_file_struk = upload_struk(
                         foto_struk.getvalue(), mime,
-                        pilihan_jenis, pilihan_kategori, input_catatan
+                        pilihan_jenis, pilihan_kategori, input_catatan if input_catatan else pilihan_kategori
                     )
                     if ok_foto:
                         link_struk = hasil_foto
                         st.success(f"📷 Foto tersimpan: `{nama_file_struk}`")
                         st.markdown(f"[🔗 Buka di Google Drive]({link_struk})")
                     else:
-                        st.error(f"❌ Foto gagal diupload: {hasil_foto}")
+                        st.session_state["error_foto"] = f"❌ Foto gagal diupload: {hasil_foto}"
                 except Exception as ex:
-                    st.error(f"❌ Error upload foto: {ex}")
+                    st.session_state["error_foto"] = f"❌ Error upload foto: {ex}"
+
+# Tampilkan error foto jika ada
+if "error_foto" in st.session_state and st.session_state["error_foto"]:
+    st.error(st.session_state["error_foto"])
+    if st.button("✕ Tutup pesan error"):
+        st.session_state["error_foto"] = ""
+        st.rerun()
             ok, pesan = tambah_transaksi(pilihan_jenis, pilihan_kategori, input_jumlah, input_catatan, link_struk)
         if ok:
             st.cache_data.clear()
