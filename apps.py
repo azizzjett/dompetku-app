@@ -535,13 +535,18 @@ with col_c:
 with col_d:
     input_catatan = st.text_input("Keterangan (Opsional)", placeholder="misal: Makan siang")
 
-# Kamera toggle
-aktifkan_kamera = st.toggle("📷 Aktifkan Kamera Struk")
+# Kamera toggle dengan auto-reset
+if "kamera_aktif" not in st.session_state:
+    st.session_state["kamera_aktif"] = False
+
+aktifkan_kamera = st.toggle("📷 Aktifkan Kamera Struk", value=st.session_state["kamera_aktif"])
+st.session_state["kamera_aktif"] = aktifkan_kamera
+
 foto_struk = None
 if aktifkan_kamera:
     foto_struk = st.camera_input("Arahkan kamera ke struk belanja")
     if foto_struk:
-        st.success("✅ Foto siap disimpan!")
+        st.success("✅ Foto siap disimpan! Klik Simpan Transaksi.")
 
 tombol_simpan = st.button("💾 Simpan Transaksi", use_container_width=True, type="primary")
 
@@ -564,6 +569,7 @@ if tombol_simpan:
             ok, pesan = tambah_transaksi(pilihan_jenis, pilihan_kategori, input_jumlah, input_catatan, link_struk)
         if ok:
             st.cache_data.clear()
+            st.session_state["kamera_aktif"] = False  # Matikan kamera otomatis
             st.success(f"✅ Tersimpan ke sheet {pesan}!")
             if link_struk:
                 st.markdown(f"📷 [Lihat Foto Struk]({link_struk})")
