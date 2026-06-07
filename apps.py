@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date
-import requests
 import plotly.express as px
 import plotly.graph_objects as go
 import gspread
@@ -14,26 +13,19 @@ from googleapiclient.http import MediaIoBaseUpload
 # =================================================================
 # 1. KONFIGURASI UTAMA
 # =================================================================
-DATA_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQeeKABS1WormMJdnNTeYTKUEw2F14XEqh3o7AqdhrPc2XE110V9gh--sPV2WAn5viJHIkjtPu_sD6H/pub?gid=535445139&single=true&output=csv"
 SPREADSHEET_ID = "1yFdjwqVBc5Eu-axzeUHWYwZXmUuTYgGlQza1crm6TiQ"
-FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSeRTFqYWhRkGMwvBvUqsgz7RWfQUw36JuLuPjcdnGnu09-9ug/formResponse"
 
 st.set_page_config(page_title="Dompetku Premium", page_icon="💰", layout="wide")
-
 st.markdown("""
 <style>
     .main { background-color: #f0f2f6; }
     .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 8px 8px 0 0;
-        padding: 8px 20px;
-        font-weight: 600;
-    }
+    .stTabs [data-baseweb="tab"] { border-radius: 8px 8px 0 0; padding: 8px 20px; font-weight: 600; }
 </style>
 """, unsafe_allow_html=True)
 
 # =================================================================
-# 2. SISTEM LOGIN
+# 2. LOGIN
 # =================================================================
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -76,287 +68,160 @@ if not st.session_state["logged_in"]:
     st.stop()
 
 # =================================================================
-# 3. GOOGLE SHEETS API
+# 3. GOOGLE API
 # =================================================================
+def get_creds():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    return Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+
 def get_gsheet_client():
     try:
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-        return gspread.authorize(creds)
+        return gspread.authorize(get_creds())
     except Exception as e:
-        st.error(f"Debug get_gsheet_client: {e}")
         return None
 
-def upload_struk_ke_drive(file_bytes, filename, mime_type):
-    """Upload foto struk ke Google Drive, simpan di folder Struk_Belanja."""
-    try:
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-        drive_service = build('drive', 'v3', credentials=creds)
+def get_spreadsheet():
+    client = get_gsheet_client()
+    if not client:
+        return None
+    return client.open_by_key(SPREADSHEET_ID)
 
-        # Cari atau buat folder Struk_Belanja
-        folder_name = "Struk_Belanja_Dompetku"
-        query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        results = drive_service.files().list(q=query, fields="files(id, name)").execute()
-        folders = results.get('files', [])
-
-        if folders:
-            folder_id = folders[0]['id']
-        else:
-            folder_metadata = {
-                'name': folder_name,
-                'mimeType': 'application/vnd.google-apps.folder'
-            }
-            folder = drive_service.files().create(body=folder_metadata, fields='id').execute()
-            folder_id = folder['id']
-            # Share folder agar bisa diakses
-            drive_service.permissions().create(
-                fileId=folder_id,
-                body={'type': 'anyone', 'role': 'reader'}
-            ).execute()
-
-        # Upload file ke folder
-        file_metadata = {
-            'name': filename,
-            'parents': [folder_id]
-        }
-        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type)
-        file = drive_service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id, webViewLink'
-        ).execute()
-
-        # Share file agar bisa dilihat via link
-        drive_service.permissions().create(
-            fileId=file['id'],
-            body={'type': 'anyone', 'role': 'reader'}
-        ).execute()
-
-        return True, file['webViewLink']
-    except Exception as e:
-        return False, str(e)
-
-def get_or_create_sheet(spreadsheet, nama_sheet):
-    """Ambil sheet jika ada, buat baru jika belum ada."""
+def get_or_create_sheet(spreadsheet, nama_sheet, header):
     try:
         return spreadsheet.worksheet(nama_sheet)
     except gspread.exceptions.WorksheetNotFound:
         sheet = spreadsheet.add_worksheet(title=nama_sheet, rows=1000, cols=10)
-        # Tambah header
-        if nama_sheet == "Pendapatan":
-            sheet.append_row(["Timestamp", "Kategori", "Jumlah", "Catatan", "Link_Struk"])
-        elif nama_sheet == "Rekap":
-            sheet.append_row(["Bulan", "Total Pengeluaran", "Jumlah Transaksi"])
-        else:  # Sheet pengeluaran bulanan
-            sheet.append_row(["Timestamp", "Kategori", "Jumlah", "Catatan", "Link_Struk"])
+        sheet.append_row(header)
         return sheet
 
-def pindahkan_data_ke_sheet_baru(client):
-    """
-    Baca semua data dari Form_Responses lama,
-    pisahkan ke sheet Pendapatan dan Pengeluaran_YYYY_MM.
-    """
+def tambah_transaksi(jenis, kategori, jumlah, catatan, link_struk=""):
     try:
-        spreadsheet = client.open_by_key("1yFdjwqVBc5Eu-axzeUHWYwZXmUuTYgGlQza1crm6TiQ")
-
-        # Baca sheet lama
-        try:
-            sheet_lama = spreadsheet.worksheet("Form_Responses")
-        except:
-            try:
-                sheet_lama = spreadsheet.worksheet("Form Responses 1")
-            except:
-                return False, "Sheet sumber tidak ditemukan"
-
-        data_lama = sheet_lama.get_all_records()
-        if not data_lama:
-            return False, "Data kosong"
-
-        df = pd.DataFrame(data_lama)
-        if 'Timestamp' in df.columns:
-            df['Tanggal'] = pd.to_datetime(df['Timestamp'], errors='coerce')
-
-        # Pisahkan dan tulis ke sheet baru
-        for _, row in df.iterrows():
-            tgl = row.get('Tanggal', datetime.now())
-            jenis = str(row.get('Jenis', '')).strip()
-            kategori = str(row.get('Kategori', '')).strip()
-            jumlah = row.get('Jumlah', 0)
-            catatan = str(row.get('Catatan', '')).strip()
-            timestamp = str(row.get('Timestamp', ''))
-
-            if jenis == 'Pendapatan':
-                sheet = get_or_create_sheet(spreadsheet, "Pendapatan")
-                sheet.append_row([timestamp, kategori, jumlah, catatan])
-            elif jenis == 'Pengeluaran':
-                if pd.notna(tgl):
-                    nama_sheet = f"Pengeluaran_{tgl.strftime('%Y_%m')}"
-                else:
-                    nama_sheet = f"Pengeluaran_{datetime.now().strftime('%Y_%m')}"
-                sheet = get_or_create_sheet(spreadsheet, nama_sheet)
-                sheet.append_row([timestamp, kategori, jumlah, catatan])
-
-        return True, "Berhasil"
+        spreadsheet = get_spreadsheet()
+        if not spreadsheet:
+            return False, "Service account belum dikonfigurasi"
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if jenis == "Pendapatan":
+            nama_sheet = "Pendapatan"
+            header = ["Timestamp", "Kategori", "Jumlah", "Catatan", "Link_Struk"]
+        else:
+            nama_sheet = f"Pengeluaran_{datetime.now().strftime('%Y_%m')}"
+            header = ["Timestamp", "Kategori", "Jumlah", "Catatan", "Link_Struk"]
+        sheet = get_or_create_sheet(spreadsheet, nama_sheet, header)
+        sheet.append_row([timestamp, kategori, float(jumlah), catatan, link_struk])
+        return True, nama_sheet
     except Exception as e:
         return False, str(e)
 
 def hapus_baris(nama_sheet, nomor_baris):
     try:
-        client = get_gsheet_client()
-        if not client:
+        spreadsheet = get_spreadsheet()
+        if not spreadsheet:
             return False, "Service account belum dikonfigurasi"
-        spreadsheet = client.open_by_key("1yFdjwqVBc5Eu-axzeUHWYwZXmUuTYgGlQza1crm6TiQ")
         sheet = spreadsheet.worksheet(nama_sheet)
         sheet.delete_rows(nomor_baris)
         return True, "Berhasil"
     except Exception as e:
         return False, str(e)
 
-def tambah_transaksi_ke_sheet(jenis, kategori, jumlah, catatan, link_struk=""):
-    """Tambah transaksi ke sheet yang sesuai berdasarkan jenis."""
+def get_or_create_drive_folder(drive_service, folder_name, parent_id=None):
+    """Cari atau buat folder di Google Drive."""
+    query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    if parent_id:
+        query += f" and '{parent_id}' in parents"
+    results = drive_service.files().list(q=query, fields="files(id)").execute()
+    folders = results.get('files', [])
+    if folders:
+        return folders[0]['id']
+    body = {'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder'}
+    if parent_id:
+        body['parents'] = [parent_id]
+    folder = drive_service.files().create(body=body, fields='id').execute()
+    drive_service.permissions().create(
+        fileId=folder['id'], body={'type': 'anyone', 'role': 'reader'}
+    ).execute()
+    return folder['id']
+
+def upload_struk(file_bytes, mime_type, jenis, kategori, catatan):
+    """Upload foto struk ke folder per bulan dengan nama file otomatis."""
     try:
-        client = get_gsheet_client()
-        if not client:
-            return False, "Service account belum dikonfigurasi"
+        creds = get_creds()
+        drive_service = build('drive', 'v3', credentials=creds)
 
-        spreadsheet = client.open_by_key("1yFdjwqVBc5Eu-axzeUHWYwZXmUuTYgGlQza1crm6TiQ")
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # Buat nama file otomatis: tanggal_kategori_keterangan
+        now = datetime.now()
+        tanggal_str = now.strftime('%Y-%m-%d')
+        bulan_str = now.strftime('%Y-%m')
+        catatan_bersih = catatan.strip().replace('/', '-').replace('\\', '-') if catatan else "tanpa-keterangan"
+        kategori_bersih = kategori.replace('/', '-').replace('&', 'dan')
+        ext = "jpg" if "jpeg" in mime_type else "png"
+        nama_file = f"{tanggal_str}_{kategori_bersih}_{catatan_bersih}.{ext}"
 
-        # Tentukan nama sheet berdasarkan jenis transaksi
-        if jenis == "Pendapatan":
-            nama_sheet = "Pendapatan"
-            header = ["Timestamp", "Kategori", "Jumlah", "Catatan", "Link_Struk"]
-            baris = [timestamp, kategori, float(jumlah), catatan, link_struk]
-        else:
-            nama_sheet = f"Pengeluaran_{datetime.now().strftime('%Y_%m')}"
-            header = ["Timestamp", "Kategori", "Jumlah", "Catatan", "Link_Struk"]
-            baris = [timestamp, kategori, float(jumlah), catatan, link_struk]
+        # Struktur folder: Struk_Belanja_Dompetku / 2026-06
+        root_id = get_or_create_drive_folder(drive_service, "Struk_Belanja_Dompetku")
+        bulan_id = get_or_create_drive_folder(drive_service, bulan_str, parent_id=root_id)
 
-        # Buka sheet, buat baru jika belum ada
-        try:
-            sheet = spreadsheet.worksheet(nama_sheet)
-        except gspread.exceptions.WorksheetNotFound:
-            sheet = spreadsheet.add_worksheet(title=nama_sheet, rows=1000, cols=6)
-            sheet.append_row(header)
-
-        sheet.append_row(baris)
-        return True, f"Berhasil disimpan ke sheet {nama_sheet}"
-
+        # Upload file ke folder bulan
+        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type)
+        file = drive_service.files().create(
+            body={'name': nama_file, 'parents': [bulan_id]},
+            media_body=media, fields='id, webViewLink'
+        ).execute()
+        drive_service.permissions().create(
+            fileId=file['id'], body={'type': 'anyone', 'role': 'reader'}
+        ).execute()
+        return True, file['webViewLink'], nama_file
     except Exception as e:
-        return False, f"Error: {e}"
-
-def update_rekap_bulanan(client=None):
-    """Update sheet Rekap dengan total pengeluaran per bulan."""
-    try:
-        if not client:
-            client = get_gsheet_client()
-        if not client:
-            return
-        spreadsheet = client.open_by_key("1yFdjwqVBc5Eu-axzeUHWYwZXmUuTYgGlQza1crm6TiQ")
-        semua_sheet = [s.title for s in spreadsheet.worksheets()]
-        sheet_pengeluaran = sorted([s for s in semua_sheet if s.startswith("Pengeluaran_")])
-
-        rekap_data = []
-        for nama in sheet_pengeluaran:
-            sh = spreadsheet.worksheet(nama)
-            records = sh.get_all_records()
-            if records:
-                df = pd.DataFrame(records)
-                if 'Jumlah' in df.columns:
-                    total = pd.to_numeric(df['Jumlah'], errors='coerce').fillna(0).sum()
-                    bulan_str = nama.replace("Pengeluaran_", "").replace("_", "-")
-                    rekap_data.append([bulan_str, total, len(df)])
-
-        if rekap_data:
-            sheet_rekap = get_or_create_sheet(spreadsheet, "Rekap")
-            sheet_rekap.clear()
-            sheet_rekap.append_row(["Bulan", "Total Pengeluaran", "Jumlah Transaksi"])
-            for row in rekap_data:
-                sheet_rekap.append_row(row)
-    except:
-        pass
+        return False, str(e), ""
 
 # =================================================================
-# 4. FUNGSI BACA DATA DARI SEMUA SHEET
+# 4. BACA DATA
 # =================================================================
 @st.cache_data(ttl=15)
-def muat_semua_data():
-    """Baca data dari sheet Pendapatan + semua sheet Pengeluaran_YYYY_MM."""
+def muat_data():
+    hasil = {"pendapatan": pd.DataFrame(), "pengeluaran": {}, "sumber": "ok"}
     try:
-        # Untuk membaca publik, kita pakai URL CSV sheet per sheet
-        # Daftar sheet yang ada kita ambil via gspread jika ada service account
-        hasil = {
-            "pendapatan": pd.DataFrame(),
-            "pengeluaran": {},  # dict {nama_sheet: df}
-            "rekap": pd.DataFrame(),
-            "sumber": "baru"  # flag apakah pakai sheet baru atau lama
-        }
+        creds = get_creds()
+        client = gspread.authorize(creds)
+        spreadsheet = client.open_by_key(SPREADSHEET_ID)
+        semua_sheet = [s.title for s in spreadsheet.worksheets()]
 
-        # Coba baca via gspread (butuh service account)
-        try:
-            scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-            creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-            client = gspread.authorize(creds)
-            spreadsheet = client.open_by_key("1yFdjwqVBc5Eu-axzeUHWYwZXmUuTYgGlQza1crm6TiQ")
-            semua_sheet = [s.title for s in spreadsheet.worksheets()]
+        if "Pendapatan" in semua_sheet:
+            records = spreadsheet.worksheet("Pendapatan").get_all_records()
+            if records:
+                df = pd.DataFrame(records)
+                df['Tanggal'] = pd.to_datetime(df.get('Timestamp', pd.Series(dtype=str)), errors='coerce')
+                df['Jumlah'] = pd.to_numeric(df.get('Jumlah', 0), errors='coerce').fillna(0)
+                df['_baris_sheet'] = range(2, len(df) + 2)
+                hasil["pendapatan"] = df
 
-            # Baca Pendapatan
-            if "Pendapatan" in semua_sheet:
-                records = spreadsheet.worksheet("Pendapatan").get_all_records()
-                if records:
-                    df = pd.DataFrame(records)
-                    df['Tanggal'] = pd.to_datetime(df.get('Timestamp', pd.Series()), errors='coerce')
-                    df['Jumlah'] = pd.to_numeric(df.get('Jumlah', 0), errors='coerce').fillna(0)
-                    hasil["pendapatan"] = df
+        for nama in sorted([s for s in semua_sheet if s.startswith("Pengeluaran_")]):
+            records = spreadsheet.worksheet(nama).get_all_records()
+            if records:
+                df = pd.DataFrame(records)
+                df['Tanggal'] = pd.to_datetime(df.get('Timestamp', pd.Series(dtype=str)), errors='coerce')
+                df['Jumlah'] = pd.to_numeric(df.get('Jumlah', 0), errors='coerce').fillna(0)
+                df['_baris_sheet'] = range(2, len(df) + 2)
+                df['_nama_sheet'] = nama
+                hasil["pengeluaran"][nama] = df
 
-            # Baca semua sheet Pengeluaran_YYYY_MM
-            sheet_pengeluaran = sorted([s for s in semua_sheet if s.startswith("Pengeluaran_")])
-            for nama in sheet_pengeluaran:
-                records = spreadsheet.worksheet(nama).get_all_records()
-                if records:
-                    df = pd.DataFrame(records)
-                    df['Tanggal'] = pd.to_datetime(df.get('Timestamp', pd.Series()), errors='coerce')
-                    df['Jumlah'] = pd.to_numeric(df.get('Jumlah', 0), errors='coerce').fillna(0)
-                    df['_baris_sheet'] = range(2, len(df) + 2)
-                    df['_nama_sheet'] = nama
-                    hasil["pengeluaran"][nama] = df
-
-            # Baca Rekap
-            if "Rekap" in semua_sheet:
-                records = spreadsheet.worksheet("Rekap").get_all_records()
-                if records:
-                    hasil["rekap"] = pd.DataFrame(records)
-
-            return hasil, None
-
-        except Exception as e_api:
-            # Jika API gagal, kembalikan data kosong dengan pesan error
-            hasil["sumber"] = "error"
-            return hasil, str(e_api)
-
+        return hasil, None
     except Exception as e:
-        return {"pendapatan": pd.DataFrame(), "pengeluaran": {}, "rekap": pd.DataFrame(), "sumber": "error"}, str(e)
+        hasil["sumber"] = "error"
+        return hasil, str(e)
 
 # =================================================================
-# 5. HEADER + SIDEBAR
+# 5. SIDEBAR
 # =================================================================
 st.title("💰 Dompetku Realtime Monitoring")
 st.caption("Sistem Pelacak Keuangan Pribadi — Terintegrasi Google Sheets")
 st.markdown("---")
 
-data, error_load = muat_semua_data()
+data, error_load = muat_data()
 df_pendapatan = data["pendapatan"]
 dict_pengeluaran = data["pengeluaran"]
-df_rekap = data["rekap"]
-
-# Gabungkan semua pengeluaran untuk ringkasan
 df_pengeluaran_all = pd.concat(dict_pengeluaran.values(), ignore_index=True) if dict_pengeluaran else pd.DataFrame()
 
 with st.sidebar:
@@ -364,43 +229,34 @@ with st.sidebar:
     if st.button("🚪 Logout", use_container_width=True):
         st.session_state.clear()
         st.rerun()
-
     st.markdown("---")
-    st.markdown("### ⚙️ Panel Kontrol")
     if st.button("🔄 Refresh Data", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
-
     st.markdown("---")
     st.markdown("**Status**")
-    if error_load and data["sumber"] == "error":
+    if error_load:
         st.error(f"❌ {error_load}")
-    elif data["sumber"] == "lama":
-        st.warning("⚠️ Membaca dari sheet lama")
-        st.info("Klik 'Migrasi Data' di tab Pengaturan untuk memisahkan sheet")
     else:
         total_p = len(df_pendapatan)
         total_e = sum(len(v) for v in dict_pengeluaran.values())
         st.success(f"✅ {total_p} pendapatan | {total_e} pengeluaran")
-
     try:
         _ = st.secrets["gcp_service_account"]
         st.success("🔑 Service Account: Aktif")
     except:
         st.warning("🔑 Service Account: Nonaktif")
-
     st.caption(f"🕐 {datetime.now().strftime('%H:%M:%S')}")
 
 # =================================================================
-# 6. HITUNG RINGKASAN
+# 6. RINGKASAN SALDO
 # =================================================================
-total_pendapatan = df_pendapatan['Jumlah'].sum() if not df_pendapatan.empty and 'Jumlah' in df_pendapatan.columns else 0
-total_pengeluaran = df_pengeluaran_all['Jumlah'].sum() if not df_pengeluaran_all.empty and 'Jumlah' in df_pengeluaran_all.columns else 0
+total_pendapatan = df_pendapatan['Jumlah'].sum() if not df_pendapatan.empty else 0
+total_pengeluaran = df_pengeluaran_all['Jumlah'].sum() if not df_pengeluaran_all.empty else 0
 sisa_saldo = total_pendapatan - total_pengeluaran
 rasio_hemat = (sisa_saldo / total_pendapatan * 100) if total_pendapatan > 0 else 0
 
-# Kartu ringkasan
-st.subheader("📊 Ringkasan Saldo Keseluruhan")
+st.subheader("📊 Ringkasan Saldo")
 k1, k2, k3, k4 = st.columns(4)
 with k1:
     st.markdown(f"""<div style='background:linear-gradient(135deg,#28a745,#20c863);padding:20px;border-radius:12px;color:white;'>
@@ -428,31 +284,26 @@ with k4:
 st.markdown("<br>", unsafe_allow_html=True)
 
 # =================================================================
-# 7. TABS UTAMA
+# 7. TABS
 # =================================================================
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📈 Dashboard", "🟩 Pendapatan", "🟥 Pengeluaran per Bulan", "🗑️ Hapus", "⚙️ Pengaturan"
 ])
 
-# ----------------------------------------------------------------
 # TAB 1: DASHBOARD
-# ----------------------------------------------------------------
 with tab1:
     st.subheader("📈 Grafik Keuangan")
-
     if not df_pengeluaran_all.empty or not df_pendapatan.empty:
         g1, g2 = st.columns([2, 1])
-
         with g1:
             st.markdown("**Tren Pendapatan vs Pengeluaran**")
             rows = []
-            if not df_pendapatan.empty and 'Tanggal' in df_pendapatan.columns:
+            if not df_pendapatan.empty:
                 for _, r in df_pendapatan.iterrows():
                     rows.append({'Tanggal': r['Tanggal'], 'Jumlah': r['Jumlah'], 'Jenis': 'Pendapatan'})
-            if not df_pengeluaran_all.empty and 'Tanggal' in df_pengeluaran_all.columns:
+            if not df_pengeluaran_all.empty:
                 for _, r in df_pengeluaran_all.iterrows():
                     rows.append({'Tanggal': r['Tanggal'], 'Jumlah': r['Jumlah'], 'Jenis': 'Pengeluaran'})
-
             if rows:
                 df_gabung = pd.DataFrame(rows)
                 df_gabung['Hari'] = df_gabung['Tanggal'].dt.strftime('%Y-%m-%d')
@@ -461,7 +312,6 @@ with tab1:
                 for col in ['Pendapatan', 'Pengeluaran']:
                     if col not in df_tren.columns:
                         df_tren[col] = 0
-
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=df_tren['Hari'], y=df_tren['Pendapatan'],
                     mode='lines+markers', name='Pendapatan', line=dict(color='#28a745', width=3),
@@ -474,7 +324,6 @@ with tab1:
                     legend=dict(orientation="h", y=1.1), margin=dict(t=20,b=20))
                 fig.update_yaxes(tickprefix="Rp ", tickformat=",.0f")
                 st.plotly_chart(fig, use_container_width=True)
-
         with g2:
             st.markdown("**Alokasi Pengeluaran**")
             if not df_pengeluaran_all.empty and 'Kategori' in df_pengeluaran_all.columns:
@@ -486,39 +335,27 @@ with tab1:
                     paper_bgcolor='rgba(0,0,0,0)')
                 st.plotly_chart(fig_pie, use_container_width=True)
 
-        # Grafik rekap bulanan pengeluaran
         st.markdown("**📊 Total Pengeluaran per Bulan**")
         if dict_pengeluaran:
-            rekap_list = []
-            for nama, df in dict_pengeluaran.items():
-                bulan = nama.replace("Pengeluaran_", "").replace("_", "-")
-                total = df['Jumlah'].sum() if 'Jumlah' in df.columns else 0
-                rekap_list.append({'Bulan': bulan, 'Total': total})
-            df_rekap_chart = pd.DataFrame(rekap_list).sort_values('Bulan')
-
-            fig_bulan = px.bar(df_rekap_chart, x='Bulan', y='Total',
-                color_discrete_sequence=['#dc3545'], text_auto=True)
-            fig_bulan.update_traces(texttemplate='Rp %{y:,.0f}', textposition='outside', textfont_size=10)
-            fig_bulan.update_layout(height=300, plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)', margin=dict(t=30,b=20),
-                yaxis_title="Total Pengeluaran (Rp)", xaxis_title="Bulan")
-            fig_bulan.update_yaxes(tickprefix="Rp ", tickformat=",.0f")
-            st.plotly_chart(fig_bulan, use_container_width=True)
+            rekap_list = [{'Bulan': n.replace("Pengeluaran_","").replace("_","-"),
+                'Total': df['Jumlah'].sum()} for n, df in dict_pengeluaran.items()]
+            df_rc = pd.DataFrame(rekap_list).sort_values('Bulan')
+            fig_b = px.bar(df_rc, x='Bulan', y='Total', color_discrete_sequence=['#dc3545'], text_auto=True)
+            fig_b.update_traces(texttemplate='Rp %{y:,.0f}', textposition='outside', textfont_size=10)
+            fig_b.update_layout(height=300, plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                margin=dict(t=30,b=20), yaxis_title="Total (Rp)", xaxis_title="Bulan")
+            fig_b.update_yaxes(tickprefix="Rp ", tickformat=",.0f")
+            st.plotly_chart(fig_b, use_container_width=True)
     else:
         st.info("Belum ada data untuk ditampilkan.")
 
-# ----------------------------------------------------------------
 # TAB 2: PENDAPATAN
-# ----------------------------------------------------------------
 with tab2:
     st.subheader("🟩 Data Pendapatan")
-
     if not df_pendapatan.empty:
-        # Filter periode
         col_f1, col_f2, col_f3 = st.columns([1,1,2])
         with col_f1:
             mode = st.selectbox("Filter", ["Semua", "Bulan Ini", "Bulan Lalu", "7 Hari Terakhir", "Custom"], key="filter_p")
-        
         hari_ini = date.today()
         if mode == "Bulan Ini":
             tgl_mulai, tgl_selesai = hari_ini.replace(day=1), hari_ini
@@ -536,110 +373,73 @@ with tab2:
             tgl_mulai = df_pendapatan['Tanggal'].min().date()
             tgl_selesai = df_pendapatan['Tanggal'].max().date()
 
-        df_p_filtered = df_pendapatan[
-            (df_pendapatan['Tanggal'].dt.date >= tgl_mulai) &
-            (df_pendapatan['Tanggal'].dt.date <= tgl_selesai)
-        ]
-
-        total_p = df_p_filtered['Jumlah'].sum()
+        df_pf = df_pendapatan[(df_pendapatan['Tanggal'].dt.date >= tgl_mulai) &
+            (df_pendapatan['Tanggal'].dt.date <= tgl_selesai)]
+        total_p = df_pf['Jumlah'].sum()
         st.markdown(f"""<div style='background:linear-gradient(135deg,#28a745,#20c863);padding:15px 20px;border-radius:10px;color:white;margin-bottom:15px;'>
-            <b>Total Pendapatan Periode Ini: Rp {total_p:,.0f}</b> — {len(df_p_filtered)} transaksi
+            <b>Total Pendapatan: Rp {total_p:,.0f}</b> — {len(df_pf)} transaksi
         </div>""", unsafe_allow_html=True)
-
-        kolom_tampil = [c for c in ['Timestamp', 'Kategori', 'Jumlah', 'Catatan'] if c in df_p_filtered.columns]
-        df_show = df_p_filtered[kolom_tampil].copy().iloc[::-1].reset_index(drop=True)
+        kolom_tampil = [c for c in ['Timestamp','Kategori','Jumlah','Catatan','Link_Struk'] if c in df_pf.columns]
+        df_show = df_pf[kolom_tampil].copy().iloc[::-1].reset_index(drop=True)
         if 'Jumlah' in df_show.columns:
             df_show['Jumlah'] = df_show['Jumlah'].apply(lambda x: f"Rp {x:,.0f}")
         st.dataframe(df_show, use_container_width=True, height=400)
     else:
-        st.info("Belum ada data pendapatan. Tambah transaksi dulu.")
+        st.info("Belum ada data pendapatan.")
 
-# ----------------------------------------------------------------
 # TAB 3: PENGELUARAN PER BULAN
-# ----------------------------------------------------------------
 with tab3:
     st.subheader("🟥 Pengeluaran per Bulan")
-
     if dict_pengeluaran:
         nama_sheet_list = sorted(dict_pengeluaran.keys())
-        bulan_list = [n.replace("Pengeluaran_", "").replace("_", "-") for n in nama_sheet_list]
-
-        # Tabs per bulan
-        if len(bulan_list) == 1:
-            tabs_bulan = [st.container()]
-            bulan_dipilih = [nama_sheet_list[0]]
-        else:
-            tabs_bulan = st.tabs(bulan_list)
-            bulan_dipilih = nama_sheet_list
-
-        for i, (tab_b, nama_sheet) in enumerate(zip(tabs_bulan, bulan_dipilih)):
+        bulan_list = [n.replace("Pengeluaran_","").replace("_","-") for n in nama_sheet_list]
+        tabs_bulan = [st.container()] if len(bulan_list) == 1 else st.tabs(bulan_list)
+        for i, (tab_b, nama_sheet) in enumerate(zip(tabs_bulan, nama_sheet_list)):
             with tab_b:
                 df_bln = dict_pengeluaran[nama_sheet]
-                total_bln = df_bln['Jumlah'].sum() if 'Jumlah' in df_bln.columns else 0
-                jumlah_transaksi = len(df_bln)
-                rata_rata = total_bln / jumlah_transaksi if jumlah_transaksi > 0 else 0
-
-                # Kartu ringkasan bulan
+                total_bln = df_bln['Jumlah'].sum()
+                jml_trx = len(df_bln)
+                rata = total_bln / jml_trx if jml_trx > 0 else 0
                 cb1, cb2, cb3 = st.columns(3)
                 with cb1:
                     st.markdown(f"""<div style='background:linear-gradient(135deg,#dc3545,#ff4d5e);padding:15px;border-radius:10px;color:white;'>
-                        <p style='margin:0;font-size:12px;opacity:0.9;'>TOTAL BULAN INI</p>
-                        <h3 style='margin:5px 0 0 0;'>Rp {total_bln:,.0f}</h3>
-                    </div>""", unsafe_allow_html=True)
+                        <p style='margin:0;font-size:12px;'>TOTAL BULAN INI</p><h3 style='margin:5px 0 0 0;'>Rp {total_bln:,.0f}</h3></div>""", unsafe_allow_html=True)
                 with cb2:
                     st.markdown(f"""<div style='background:linear-gradient(135deg,#6c757d,#495057);padding:15px;border-radius:10px;color:white;'>
-                        <p style='margin:0;font-size:12px;opacity:0.9;'>JUMLAH TRANSAKSI</p>
-                        <h3 style='margin:5px 0 0 0;'>{jumlah_transaksi} transaksi</h3>
-                    </div>""", unsafe_allow_html=True)
+                        <p style='margin:0;font-size:12px;'>JUMLAH TRANSAKSI</p><h3 style='margin:5px 0 0 0;'>{jml_trx} transaksi</h3></div>""", unsafe_allow_html=True)
                 with cb3:
                     st.markdown(f"""<div style='background:linear-gradient(135deg,#fd7e14,#e65c00);padding:15px;border-radius:10px;color:white;'>
-                        <p style='margin:0;font-size:12px;opacity:0.9;'>RATA-RATA PER TRANSAKSI</p>
-                        <h3 style='margin:5px 0 0 0;'>Rp {rata_rata:,.0f}</h3>
-                    </div>""", unsafe_allow_html=True)
-
+                        <p style='margin:0;font-size:12px;'>RATA-RATA</p><h3 style='margin:5px 0 0 0;'>Rp {rata:,.0f}</h3></div>""", unsafe_allow_html=True)
                 st.markdown("<br>", unsafe_allow_html=True)
-
-                # Grafik kategori bulan ini
                 if 'Kategori' in df_bln.columns:
-                    col_g1, col_g2 = st.columns(2)
-                    with col_g1:
+                    cg1, cg2 = st.columns(2)
+                    with cg1:
                         df_kat = df_bln.groupby('Kategori')['Jumlah'].sum().reset_index().sort_values('Jumlah', ascending=True)
                         fig_kat = px.bar(df_kat, x='Jumlah', y='Kategori', orientation='h',
-                            color='Jumlah', color_continuous_scale='Reds', text_auto=True)
+                            color='Jumlah', color_continuous_scale='Reds', text_auto=True, title="Per Kategori")
                         fig_kat.update_traces(texttemplate='Rp %{x:,.0f}', textposition='outside', textfont_size=9)
-                        fig_kat.update_layout(height=280, margin=dict(t=10,b=10),
-                            plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                            coloraxis_showscale=False, title="Pengeluaran per Kategori")
+                        fig_kat.update_layout(height=280, margin=dict(t=30,b=10),
+                            plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', coloraxis_showscale=False)
                         st.plotly_chart(fig_kat, use_container_width=True)
-                    with col_g2:
-                        fig_pie2 = px.pie(df_kat, values='Jumlah', names='Kategori', hole=0.4,
-                            color_discrete_sequence=px.colors.qualitative.Set3,
-                            title="Proporsi Kategori")
-                        fig_pie2.update_traces(textposition='inside', textinfo='percent+label')
-                        fig_pie2.update_layout(showlegend=False, height=280, margin=dict(t=30,b=10),
-                            paper_bgcolor='rgba(0,0,0,0)')
-                        st.plotly_chart(fig_pie2, use_container_width=True)
-
-                # Tabel detail
-                kolom_tampil = [c for c in ['Timestamp', 'Kategori', 'Jumlah', 'Catatan'] if c in df_bln.columns]
+                    with cg2:
+                        fig_p2 = px.pie(df_kat, values='Jumlah', names='Kategori', hole=0.4,
+                            color_discrete_sequence=px.colors.qualitative.Set3, title="Proporsi")
+                        fig_p2.update_traces(textposition='inside', textinfo='percent+label')
+                        fig_p2.update_layout(showlegend=False, height=280, margin=dict(t=30,b=10), paper_bgcolor='rgba(0,0,0,0)')
+                        st.plotly_chart(fig_p2, use_container_width=True)
+                kolom_tampil = [c for c in ['Timestamp','Kategori','Jumlah','Catatan','Link_Struk'] if c in df_bln.columns]
                 df_show = df_bln[kolom_tampil].copy().iloc[::-1].reset_index(drop=True)
                 if 'Jumlah' in df_show.columns:
                     df_show['Jumlah'] = df_show['Jumlah'].apply(lambda x: f"Rp {x:,.0f}")
                 st.dataframe(df_show, use_container_width=True, height=300)
-
-                # Total di bawah tabel
                 st.markdown(f"""<div style='background:#f8d7da;padding:12px 20px;border-radius:8px;border-left:5px solid #dc3545;margin-top:10px;'>
-                    <b style='color:#721c24;'>🧮 Total Pengeluaran {bulan_list[i]}: Rp {total_bln:,.0f}</b>
-                </div>""", unsafe_allow_html=True)
+                    <b style='color:#721c24;'>🧮 Total {bulan_list[i]}: Rp {total_bln:,.0f}</b></div>""", unsafe_allow_html=True)
     else:
-        st.info("Belum ada data pengeluaran per bulan.")
+        st.info("Belum ada data pengeluaran.")
 
-# ----------------------------------------------------------------
-# TAB 4: HAPUS TRANSAKSI
-# ----------------------------------------------------------------
+# TAB 4: HAPUS
 with tab4:
     st.subheader("🗑️ Hapus Transaksi")
-
     service_account_ada = True
     try:
         _ = st.secrets["gcp_service_account"]
@@ -647,10 +447,9 @@ with tab4:
         service_account_ada = False
 
     if not service_account_ada:
-        st.warning("⚠️ Fitur hapus memerlukan Service Account yang aktif.")
+        st.warning("⚠️ Fitur hapus memerlukan Service Account aktif.")
     else:
         hapus_dari = st.radio("Hapus dari:", ["Pendapatan", "Pengeluaran (pilih bulan)"], horizontal=True)
-
         if hapus_dari == "Pendapatan":
             if not df_pendapatan.empty:
                 def label_p(row):
@@ -674,11 +473,9 @@ with tab4:
                 st.info("Tidak ada data pendapatan.")
         else:
             if dict_pengeluaran:
-                nama_sheet_hapus = st.selectbox("Pilih bulan:",
-                    sorted(dict_pengeluaran.keys()),
+                nama_sheet_hapus = st.selectbox("Pilih bulan:", sorted(dict_pengeluaran.keys()),
                     format_func=lambda x: x.replace("Pengeluaran_","").replace("_","-"))
                 df_hapus = dict_pengeluaran[nama_sheet_hapus]
-
                 def label_e(row):
                     j = f"Rp {row['Jumlah']:,.0f}" if isinstance(row['Jumlah'], (int,float)) else row['Jumlah']
                     cat = row.get('Catatan','')
@@ -686,7 +483,6 @@ with tab4:
                     if pd.notna(cat) and str(cat).strip():
                         label += f" — {cat}"
                     return label
-
                 pilihan_e = {label_e(r): r.get('_baris_sheet', i+2) for i, (_, r) in enumerate(df_hapus.iterrows())}
                 col1, col2 = st.columns([3,1])
                 with col1:
@@ -704,43 +500,9 @@ with tab4:
             else:
                 st.info("Tidak ada data pengeluaran.")
 
-# ----------------------------------------------------------------
 # TAB 5: PENGATURAN
-# ----------------------------------------------------------------
 with tab5:
-    st.subheader("⚙️ Pengaturan & Migrasi Data")
-
-    st.markdown("### 📦 Migrasi Data Lama")
-    st.info("""
-    Tombol di bawah akan membaca data dari sheet lama (`Form_Responses` / `Form Responses 1`)
-    dan memisahkannya ke sheet baru:
-    - **Pendapatan** → sheet `Pendapatan`
-    - **Pengeluaran** → sheet `Pengeluaran_YYYY_MM` sesuai bulan
-    """)
-
-    if st.button("🚀 Mulai Migrasi Data Sekarang", type="primary"):
-        client = get_gsheet_client()
-        if not client:
-            st.error("❌ Service Account belum aktif. Tidak bisa migrasi.")
-        else:
-            with st.spinner("Sedang memindahkan data..."):
-                ok, msg = pindahkan_data_ke_sheet_baru(client)
-                if ok:
-                    st.cache_data.clear()
-                    st.success("✅ Migrasi berhasil! Refresh halaman.")
-                    st.rerun()
-                else:
-                    st.error(f"❌ Gagal: {msg}")
-
-    st.markdown("---")
-    st.markdown("### 🔄 Update Rekap Bulanan")
-    st.info("Klik tombol ini untuk memperbarui sheet Rekap dengan total pengeluaran per bulan.")
-    if st.button("📊 Update Rekap"):
-        with st.spinner("Memperbarui rekap..."):
-            update_rekap_bulanan()
-        st.success("✅ Rekap diperbarui!")
-
-    st.markdown("---")
+    st.subheader("⚙️ Pengaturan")
     with st.expander("🔐 Cara Ubah Password Login"):
         st.markdown("""
         Di Streamlit Cloud → **Settings → Secrets**, tambahkan:
@@ -749,17 +511,15 @@ with tab5:
         admin = "hash_sha256_password_anda"
         ```
         Generate hash di: https://emn178.github.io/online-tools/sha256.html
-
-        Default login: `admin` / `dompetku123`
+        Default: `admin` / `dompetku123`
         """)
 
 # =================================================================
-# 8. FORM TAMBAH TRANSAKSI (FIXED DI BAWAH)
+# 8. TAMBAH TRANSAKSI
 # =================================================================
 st.markdown("---")
 st.subheader("➕ Tambah Transaksi Baru")
 
-# Input transaksi TANPA form agar kamera bisa jalan
 col_a, col_b = st.columns(2)
 with col_a:
     pilihan_jenis = st.selectbox("Jenis Transaksi", ["Pengeluaran", "Pendapatan"])
@@ -775,9 +535,8 @@ with col_c:
 with col_d:
     input_catatan = st.text_input("Keterangan (Opsional)", placeholder="misal: Makan siang")
 
-# Kamera di luar form — toggle on/off
-st.markdown("📷 **Foto Struk (Opsional)**")
-aktifkan_kamera = st.toggle("Aktifkan Kamera")
+# Kamera toggle
+aktifkan_kamera = st.toggle("📷 Aktifkan Kamera Struk")
 foto_struk = None
 if aktifkan_kamera:
     foto_struk = st.camera_input("Arahkan kamera ke struk belanja")
@@ -788,36 +547,29 @@ tombol_simpan = st.button("💾 Simpan Transaksi", use_container_width=True, typ
 
 if tombol_simpan:
     if input_jumlah > 0:
-        with st.spinner("Menyimpan ke database..."):
+        with st.spinner("Menyimpan..."):
             link_struk = ""
-
-            # Upload foto struk jika ada
+            nama_file_struk = ""
             if foto_struk is not None:
-                with st.spinner("Mengupload foto struk ke Google Drive..."):
-                    nama_file = f"struk_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                    ok_foto, hasil_foto = upload_struk_ke_drive(
-                        foto_struk.getvalue(),
-                        nama_file,
-                        "image/png"
-                    )
-                    if ok_foto:
-                        link_struk = hasil_foto
-                        st.success("📷 Foto struk berhasil diupload!")
-                    else:
-                        st.warning(f"⚠️ Foto gagal diupload: {hasil_foto} — transaksi tetap disimpan.")
-
-            ok, pesan = tambah_transaksi_ke_sheet(
-                pilihan_jenis, pilihan_kategori, input_jumlah, input_catatan, link_struk
-            )
+                mime = "image/png"
+                ok_foto, hasil_foto, nama_file_struk = upload_struk(
+                    foto_struk.getvalue(), mime,
+                    pilihan_jenis, pilihan_kategori, input_catatan
+                )
+                if ok_foto:
+                    link_struk = hasil_foto
+                    st.success(f"📷 Foto tersimpan: `{nama_file_struk}`")
+                else:
+                    st.warning(f"⚠️ Foto gagal diupload: {hasil_foto}")
+            ok, pesan = tambah_transaksi(pilihan_jenis, pilihan_kategori, input_jumlah, input_catatan, link_struk)
         if ok:
             st.cache_data.clear()
-            st.success("✅ Transaksi berhasil disimpan!")
+            st.success(f"✅ Tersimpan ke sheet {pesan}!")
             if link_struk:
                 st.markdown(f"📷 [Lihat Foto Struk]({link_struk})")
             st.balloons()
             st.rerun()
         else:
-            st.error(f"❌ Gagal menyimpan: {pesan}")
-            st.info("Pastikan Service Account aktif dan spreadsheet sudah di-share ke email service account.")
+            st.error(f"❌ Gagal: {pesan}")
     else:
         st.error("⚠️ Nominal harus lebih dari Rp 0!")
