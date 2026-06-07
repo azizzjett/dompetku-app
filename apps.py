@@ -759,29 +759,32 @@ with tab5:
 st.markdown("---")
 st.subheader("➕ Tambah Transaksi Baru")
 
-with st.form("form_keuangan", clear_on_submit=True):
-    col_a, col_b = st.columns(2)
-    with col_a:
-        pilihan_jenis = st.selectbox("Jenis Transaksi", ["Pengeluaran", "Pendapatan"])
-    with col_b:
-        if pilihan_jenis == "Pengeluaran":
-            pilihan_kategori = st.selectbox("Kategori", ["Makanan & Minuman","Transportasi","Belanja bulanan","Tagihan & Listrik","Hiburan","Lainnya"])
-        else:
-            pilihan_kategori = st.selectbox("Kategori", ["Gaji Utama","Bonus / Proyek","Investasi","Pemberian","Lainnya"])
-    col_c, col_d = st.columns(2)
-    with col_c:
-        input_jumlah = st.number_input("Nominal Uang (Rp)", min_value=0, value=0, step=5000)
-    with col_d:
-        input_catatan = st.text_input("Keterangan (Opsional)", placeholder="misal: Makan siang")
-    
-    # Kamera dengan toggle on/off
-    st.markdown("📷 **Foto Struk (Opsional)**")
-    aktifkan_kamera = st.checkbox("📷 Aktifkan Kamera")
-    foto_struk = None
-    if aktifkan_kamera:
-        foto_struk = st.camera_input("Arahkan kamera ke struk belanja")
+# Input transaksi TANPA form agar kamera bisa jalan
+col_a, col_b = st.columns(2)
+with col_a:
+    pilihan_jenis = st.selectbox("Jenis Transaksi", ["Pengeluaran", "Pendapatan"])
+with col_b:
+    if pilihan_jenis == "Pengeluaran":
+        pilihan_kategori = st.selectbox("Kategori", ["Makanan & Minuman","Transportasi","Belanja bulanan","Tagihan & Listrik","Hiburan","Lainnya"])
+    else:
+        pilihan_kategori = st.selectbox("Kategori", ["Gaji Utama","Bonus / Proyek","Investasi","Pemberian","Lainnya"])
 
-    tombol_simpan = st.form_submit_button("💾 Simpan Transaksi", use_container_width=True)
+col_c, col_d = st.columns(2)
+with col_c:
+    input_jumlah = st.number_input("Nominal Uang (Rp)", min_value=0, value=0, step=5000)
+with col_d:
+    input_catatan = st.text_input("Keterangan (Opsional)", placeholder="misal: Makan siang")
+
+# Kamera di luar form — toggle on/off
+st.markdown("📷 **Foto Struk (Opsional)**")
+aktifkan_kamera = st.toggle("Aktifkan Kamera")
+foto_struk = None
+if aktifkan_kamera:
+    foto_struk = st.camera_input("Arahkan kamera ke struk belanja")
+    if foto_struk:
+        st.success("✅ Foto siap disimpan!")
+
+tombol_simpan = st.button("💾 Simpan Transaksi", use_container_width=True, type="primary")
 
 if tombol_simpan:
     if input_jumlah > 0:
