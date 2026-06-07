@@ -7,11 +7,11 @@ import gspread
 from google.oauth2.service_account import Credentials
 import hashlib
 import io
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 
+# =================================================================
+# 1. KONFIGURASI UTAMA
+# =================================================================
 SPREADSHEET_ID = "1yFdjwqVBc5Eu-axzeUHWYwZXmUuTYgGlQza1crm6TiQ"
-DRIVE_FOLDER_ID = "1I63tiJkiUt50E86hjrX7HHjvgC6S-WFH"
 
 st.set_page_config(page_title="Dompetku Premium", page_icon="💰", layout="wide")
 st.markdown("""
@@ -22,6 +22,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# =================================================================
+# 2. LOGIN
+# =================================================================
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -62,6 +65,9 @@ if not st.session_state["logged_in"]:
         st.info("💡 Default: username `admin` / password `dompetku123`")
     st.stop()
 
+# =================================================================
+# 3. GOOGLE API
+# =================================================================
 def get_creds():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -119,38 +125,55 @@ def hapus_baris(nama_sheet, nomor_baris):
         return False, str(e)
 
 def upload_struk(file_bytes, mime_type, jenis, kategori, catatan):
+    """Upload foto struk ke Google Drive folder milik user (privat)."""
     try:
-        creds = get_creds()
-        drive_service = build('drive', 'v3', credentials=creds)
+        FOLDER_ID = "1I63tiJkiUt50E86hjrX7HHjvgC6S-WFH"
+
+        # Buat nama file otomatis: tanggal_kategori_keterangan
         now = datetime.now()
         tanggal_str = now.strftime('%Y-%m-%d')
-        catatan_bersih = catatan.strip().replace('/', '-').replace('\\', '-') if catatan else "tanpa-keterangan"
-        kategori_bersih = kategori.replace('/', '-').replace('&', 'dan')
-        if "jpeg" in mime_type or "jpg" in mime_type:
-            ext = "jpg"
-        elif "png" in mime_type:
-            ext = "png"
-        else:
-            ext = "jpg"
-        nama_file = f"{tanggal_str}_{kategori_bersih}_{catatan_bersih[:30]}.{ext}"
         bulan_str = now.strftime('%Y-%m')
-        query = f"name='{bulan_str}' and mimeType='application/vnd.google-apps.folder' and '{DRIVE_FOLDER_ID}' in parents and trashed=false"
+        catatan_bersih = catatan.strip().replace('/', '-') if catatan else "tanpa-keterangan"
+        kategori_bersih = kategori.replace('/', '-').replace('&', 'dan')
+        ext = "jpg" if "jpeg" in mime_type else "png"
+        nama_file = f"{tanggal_str}_{kategori_bersih}_{catatan_bersih}.{ext}"
+
+        # Konek ke Google Drive API
+        creds = get_creds()
+        drive_service = build('drive', 'v3', credentials=creds)
+
+        # Cari atau buat subfolder per bulan di dalam folder utama
+        query = f"name='{bulan_str}' and mimeType='application/vnd.google-apps.folder' and '{FOLDER_ID}' in parents and trashed=false"
         results = drive_service.files().list(q=query, fields="files(id)").execute()
         folders = results.get('files', [])
+
         if folders:
-            bulan_id = folders[0]['id']
+            bulan_folder_id = folders[0]['id']
         else:
-            body = {'name': bulan_str, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [DRIVE_FOLDER_ID]}
-            folder = drive_service.files().create(body=body, fields='id').execute()
-            bulan_id = folder['id']
-            drive_service.permissions().create(fileId=bulan_id, body={'type': 'anyone', 'role': 'reader'}).execute()
+            folder_meta = {
+                'name': bulan_str,
+                'mimeType': 'application/vnd.google-apps.folder',
+                'parents': [FOLDER_ID]
+            }
+            bulan_folder = drive_service.files().create(body=folder_meta, fields='id').execute()
+            bulan_folder_id = bulan_folder['id']
+
+        # Upload file ke subfolder bulan
         media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type)
-        file = drive_service.files().create(body={'name': nama_file, 'parents': [bulan_id]}, media_body=media, fields='id, webViewLink').execute()
-        drive_service.permissions().create(fileId=file['id'], body={'type': 'anyone', 'role': 'reader'}).execute()
+        file = drive_service.files().create(
+            body={'name': nama_file, 'parents': [bulan_folder_id]},
+            media_body=media,
+            fields='id, webViewLink'
+        ).execute()
+
         return True, file['webViewLink'], nama_file
+
     except Exception as e:
         return False, str(e), ""
 
+# =================================================================
+# 4. BACA DATA
+# =================================================================
 @st.cache_data(ttl=15)
 def muat_data():
     hasil = {"pendapatan": pd.DataFrame(), "pengeluaran": {}, "sumber": "ok"}
@@ -159,6 +182,7 @@ def muat_data():
         client = gspread.authorize(creds)
         spreadsheet = client.open_by_key(SPREADSHEET_ID)
         semua_sheet = [s.title for s in spreadsheet.worksheets()]
+
         if "Pendapatan" in semua_sheet:
             records = spreadsheet.worksheet("Pendapatan").get_all_records()
             if records:
@@ -167,6 +191,7 @@ def muat_data():
                 df['Jumlah'] = pd.to_numeric(df.get('Jumlah', 0), errors='coerce').fillna(0)
                 df['_baris_sheet'] = range(2, len(df) + 2)
                 hasil["pendapatan"] = df
+
         for nama in sorted([s for s in semua_sheet if s.startswith("Pengeluaran_")]):
             records = spreadsheet.worksheet(nama).get_all_records()
             if records:
@@ -176,10 +201,18 @@ def muat_data():
                 df['_baris_sheet'] = range(2, len(df) + 2)
                 df['_nama_sheet'] = nama
                 hasil["pengeluaran"][nama] = df
+
         return hasil, None
     except Exception as e:
         hasil["sumber"] = "error"
         return hasil, str(e)
+
+# =================================================================
+# 5. SIDEBAR
+# =================================================================
+st.title("💰 Dompetku Realtime Monitoring")
+st.caption("Sistem Pelacak Keuangan Pribadi — Terintegrasi Google Sheets")
+st.markdown("---")
 
 data, error_load = muat_data()
 df_pendapatan = data["pendapatan"]
@@ -206,19 +239,17 @@ with st.sidebar:
     try:
         _ = st.secrets["gcp_service_account"]
         st.success("🔑 Service Account: Aktif")
-        st.info(f"📁 Folder Drive ID: `{DRIVE_FOLDER_ID[:8]}...`")
     except:
         st.warning("🔑 Service Account: Nonaktif")
     st.caption(f"🕐 {datetime.now().strftime('%H:%M:%S')}")
 
+# =================================================================
+# 6. RINGKASAN SALDO
+# =================================================================
 total_pendapatan = df_pendapatan['Jumlah'].sum() if not df_pendapatan.empty else 0
 total_pengeluaran = df_pengeluaran_all['Jumlah'].sum() if not df_pengeluaran_all.empty else 0
 sisa_saldo = total_pendapatan - total_pengeluaran
 rasio_hemat = (sisa_saldo / total_pendapatan * 100) if total_pendapatan > 0 else 0
-
-st.title("💰 Dompetku Realtime Monitoring")
-st.caption("Sistem Pelacak Keuangan Pribadi — Terintegrasi Google Sheets & Drive")
-st.markdown("---")
 
 st.subheader("📊 Ringkasan Saldo")
 k1, k2, k3, k4 = st.columns(4)
@@ -244,10 +275,17 @@ with k4:
         <p style='margin:0;font-size:13px;opacity:0.9;'>💡 RASIO TABUNGAN</p>
         <h2 style='margin:5px 0 0 0;font-size:24px;'>{rasio_hemat:.1f}%</h2>
     </div>""", unsafe_allow_html=True)
+
 st.markdown("<br>", unsafe_allow_html=True)
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Dashboard", "🟩 Pendapatan", "🟥 Pengeluaran per Bulan", "🗑️ Hapus", "⚙️ Pengaturan"])
+# =================================================================
+# 7. TABS
+# =================================================================
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📈 Dashboard", "🟩 Pendapatan", "🟥 Pengeluaran per Bulan", "🗑️ Hapus", "⚙️ Pengaturan"
+])
 
+# TAB 1: DASHBOARD
 with tab1:
     st.subheader("📈 Grafik Keuangan")
     if not df_pengeluaran_all.empty or not df_pendapatan.empty:
@@ -270,31 +308,43 @@ with tab1:
                     if col not in df_tren.columns:
                         df_tren[col] = 0
                 fig = go.Figure()
-                fig.add_trace(go.Scatter(x=df_tren['Hari'], y=df_tren['Pendapatan'], mode='lines+markers', name='Pendapatan', line=dict(color='#28a745', width=3), fill='tozeroy', fillcolor='rgba(40,167,69,0.1)'))
-                fig.add_trace(go.Scatter(x=df_tren['Hari'], y=df_tren['Pengeluaran'], mode='lines+markers', name='Pengeluaran', line=dict(color='#dc3545', width=3), fill='tozeroy', fillcolor='rgba(220,53,69,0.1)'))
-                fig.update_layout(height=320, hovermode="x unified", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", y=1.1), margin=dict(t=20,b=20))
+                fig.add_trace(go.Scatter(x=df_tren['Hari'], y=df_tren['Pendapatan'],
+                    mode='lines+markers', name='Pendapatan', line=dict(color='#28a745', width=3),
+                    fill='tozeroy', fillcolor='rgba(40,167,69,0.1)'))
+                fig.add_trace(go.Scatter(x=df_tren['Hari'], y=df_tren['Pengeluaran'],
+                    mode='lines+markers', name='Pengeluaran', line=dict(color='#dc3545', width=3),
+                    fill='tozeroy', fillcolor='rgba(220,53,69,0.1)'))
+                fig.update_layout(height=320, hovermode="x unified",
+                    plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                    legend=dict(orientation="h", y=1.1), margin=dict(t=20,b=20))
                 fig.update_yaxes(tickprefix="Rp ", tickformat=",.0f")
                 st.plotly_chart(fig, use_container_width=True)
         with g2:
             st.markdown("**Alokasi Pengeluaran**")
             if not df_pengeluaran_all.empty and 'Kategori' in df_pengeluaran_all.columns:
                 df_pie = df_pengeluaran_all.groupby('Kategori')['Jumlah'].sum().reset_index()
-                fig_pie = px.pie(df_pie, values='Jumlah', names='Kategori', hole=0.45, color_discrete_sequence=px.colors.qualitative.Set3)
+                fig_pie = px.pie(df_pie, values='Jumlah', names='Kategori', hole=0.45,
+                    color_discrete_sequence=px.colors.qualitative.Set3)
                 fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-                fig_pie.update_layout(showlegend=False, height=320, margin=dict(t=20,b=20), paper_bgcolor='rgba(0,0,0,0)')
+                fig_pie.update_layout(showlegend=False, height=320, margin=dict(t=20,b=20),
+                    paper_bgcolor='rgba(0,0,0,0)')
                 st.plotly_chart(fig_pie, use_container_width=True)
+
         st.markdown("**📊 Total Pengeluaran per Bulan**")
         if dict_pengeluaran:
-            rekap_list = [{'Bulan': n.replace("Pengeluaran_","").replace("_","-"), 'Total': df['Jumlah'].sum()} for n, df in dict_pengeluaran.items()]
+            rekap_list = [{'Bulan': n.replace("Pengeluaran_","").replace("_","-"),
+                'Total': df['Jumlah'].sum()} for n, df in dict_pengeluaran.items()]
             df_rc = pd.DataFrame(rekap_list).sort_values('Bulan')
             fig_b = px.bar(df_rc, x='Bulan', y='Total', color_discrete_sequence=['#dc3545'], text_auto=True)
             fig_b.update_traces(texttemplate='Rp %{y:,.0f}', textposition='outside', textfont_size=10)
-            fig_b.update_layout(height=300, plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', margin=dict(t=30,b=20), yaxis_title="Total (Rp)", xaxis_title="Bulan")
+            fig_b.update_layout(height=300, plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                margin=dict(t=30,b=20), yaxis_title="Total (Rp)", xaxis_title="Bulan")
             fig_b.update_yaxes(tickprefix="Rp ", tickformat=",.0f")
             st.plotly_chart(fig_b, use_container_width=True)
     else:
         st.info("Belum ada data untuk ditampilkan.")
 
+# TAB 2: PENDAPATAN
 with tab2:
     st.subheader("🟩 Data Pendapatan")
     if not df_pendapatan.empty:
@@ -317,19 +367,22 @@ with tab2:
         else:
             tgl_mulai = df_pendapatan['Tanggal'].min().date()
             tgl_selesai = df_pendapatan['Tanggal'].max().date()
-        df_pf = df_pendapatan[(df_pendapatan['Tanggal'].dt.date >= tgl_mulai) & (df_pendapatan['Tanggal'].dt.date <= tgl_selesai)]
+
+        df_pf = df_pendapatan[(df_pendapatan['Tanggal'].dt.date >= tgl_mulai) &
+            (df_pendapatan['Tanggal'].dt.date <= tgl_selesai)]
         total_p = df_pf['Jumlah'].sum()
-        st.markdown(f"""<div style='background:linear-gradient(135deg,#28a745,#20c863);padding:15px 20px;border-radius:10px;color:white;margin-bottom:15px;'><b>Total Pendapatan: Rp {total_p:,.0f}</b> — {len(df_pf)} transaksi</div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div style='background:linear-gradient(135deg,#28a745,#20c863);padding:15px 20px;border-radius:10px;color:white;margin-bottom:15px;'>
+            <b>Total Pendapatan: Rp {total_p:,.0f}</b> — {len(df_pf)} transaksi
+        </div>""", unsafe_allow_html=True)
         kolom_tampil = [c for c in ['Timestamp','Kategori','Jumlah','Catatan','Link_Struk'] if c in df_pf.columns]
         df_show = df_pf[kolom_tampil].copy().iloc[::-1].reset_index(drop=True)
         if 'Jumlah' in df_show.columns:
             df_show['Jumlah'] = df_show['Jumlah'].apply(lambda x: f"Rp {x:,.0f}")
-        if 'Link_Struk' in df_show.columns:
-            df_show['Link_Struk'] = df_show['Link_Struk'].apply(lambda x: f"[Lihat Foto]({x})" if pd.notna(x) and x != "" else "-")
         st.dataframe(df_show, use_container_width=True, height=400)
     else:
         st.info("Belum ada data pendapatan.")
 
+# TAB 3: PENGELUARAN PER BULAN
 with tab3:
     st.subheader("🟥 Pengeluaran per Bulan")
     if dict_pengeluaran:
@@ -344,22 +397,28 @@ with tab3:
                 rata = total_bln / jml_trx if jml_trx > 0 else 0
                 cb1, cb2, cb3 = st.columns(3)
                 with cb1:
-                    st.markdown(f"""<div style='background:linear-gradient(135deg,#dc3545,#ff4d5e);padding:15px;border-radius:10px;color:white;'><p style='margin:0;font-size:12px;'>TOTAL BULAN INI</p><h3 style='margin:5px 0 0 0;'>Rp {total_bln:,.0f}</h3></div>""", unsafe_allow_html=True)
+                    st.markdown(f"""<div style='background:linear-gradient(135deg,#dc3545,#ff4d5e);padding:15px;border-radius:10px;color:white;'>
+                        <p style='margin:0;font-size:12px;'>TOTAL BULAN INI</p><h3 style='margin:5px 0 0 0;'>Rp {total_bln:,.0f}</h3></div>""", unsafe_allow_html=True)
                 with cb2:
-                    st.markdown(f"""<div style='background:linear-gradient(135deg,#6c757d,#495057);padding:15px;border-radius:10px;color:white;'><p style='margin:0;font-size:12px;'>JUMLAH TRANSAKSI</p><h3 style='margin:5px 0 0 0;'>{jml_trx} transaksi</h3></div>""", unsafe_allow_html=True)
+                    st.markdown(f"""<div style='background:linear-gradient(135deg,#6c757d,#495057);padding:15px;border-radius:10px;color:white;'>
+                        <p style='margin:0;font-size:12px;'>JUMLAH TRANSAKSI</p><h3 style='margin:5px 0 0 0;'>{jml_trx} transaksi</h3></div>""", unsafe_allow_html=True)
                 with cb3:
-                    st.markdown(f"""<div style='background:linear-gradient(135deg,#fd7e14,#e65c00);padding:15px;border-radius:10px;color:white;'><p style='margin:0;font-size:12px;'>RATA-RATA</p><h3 style='margin:5px 0 0 0;'>Rp {rata:,.0f}</h3></div>""", unsafe_allow_html=True)
+                    st.markdown(f"""<div style='background:linear-gradient(135deg,#fd7e14,#e65c00);padding:15px;border-radius:10px;color:white;'>
+                        <p style='margin:0;font-size:12px;'>RATA-RATA</p><h3 style='margin:5px 0 0 0;'>Rp {rata:,.0f}</h3></div>""", unsafe_allow_html=True)
                 st.markdown("<br>", unsafe_allow_html=True)
                 if 'Kategori' in df_bln.columns:
                     cg1, cg2 = st.columns(2)
                     with cg1:
                         df_kat = df_bln.groupby('Kategori')['Jumlah'].sum().reset_index().sort_values('Jumlah', ascending=True)
-                        fig_kat = px.bar(df_kat, x='Jumlah', y='Kategori', orientation='h', color='Jumlah', color_continuous_scale='Reds', text_auto=True, title="Per Kategori")
+                        fig_kat = px.bar(df_kat, x='Jumlah', y='Kategori', orientation='h',
+                            color='Jumlah', color_continuous_scale='Reds', text_auto=True, title="Per Kategori")
                         fig_kat.update_traces(texttemplate='Rp %{x:,.0f}', textposition='outside', textfont_size=9)
-                        fig_kat.update_layout(height=280, margin=dict(t=30,b=10), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', coloraxis_showscale=False)
+                        fig_kat.update_layout(height=280, margin=dict(t=30,b=10),
+                            plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', coloraxis_showscale=False)
                         st.plotly_chart(fig_kat, use_container_width=True)
                     with cg2:
-                        fig_p2 = px.pie(df_kat, values='Jumlah', names='Kategori', hole=0.4, color_discrete_sequence=px.colors.qualitative.Set3, title="Proporsi")
+                        fig_p2 = px.pie(df_kat, values='Jumlah', names='Kategori', hole=0.4,
+                            color_discrete_sequence=px.colors.qualitative.Set3, title="Proporsi")
                         fig_p2.update_traces(textposition='inside', textinfo='percent+label')
                         fig_p2.update_layout(showlegend=False, height=280, margin=dict(t=30,b=10), paper_bgcolor='rgba(0,0,0,0)')
                         st.plotly_chart(fig_p2, use_container_width=True)
@@ -367,13 +426,13 @@ with tab3:
                 df_show = df_bln[kolom_tampil].copy().iloc[::-1].reset_index(drop=True)
                 if 'Jumlah' in df_show.columns:
                     df_show['Jumlah'] = df_show['Jumlah'].apply(lambda x: f"Rp {x:,.0f}")
-                if 'Link_Struk' in df_show.columns:
-                    df_show['Link_Struk'] = df_show['Link_Struk'].apply(lambda x: f"[Lihat Foto]({x})" if pd.notna(x) and x != "" else "-")
                 st.dataframe(df_show, use_container_width=True, height=300)
-                st.markdown(f"""<div style='background:#f8d7da;padding:12px 20px;border-radius:8px;border-left:5px solid #dc3545;margin-top:10px;'><b style='color:#721c24;'>🧮 Total {bulan_list[i]}: Rp {total_bln:,.0f}</b></div>""", unsafe_allow_html=True)
+                st.markdown(f"""<div style='background:#f8d7da;padding:12px 20px;border-radius:8px;border-left:5px solid #dc3545;margin-top:10px;'>
+                    <b style='color:#721c24;'>🧮 Total {bulan_list[i]}: Rp {total_bln:,.0f}</b></div>""", unsafe_allow_html=True)
     else:
         st.info("Belum ada data pengeluaran.")
 
+# TAB 4: HAPUS
 with tab4:
     st.subheader("🗑️ Hapus Transaksi")
     service_account_ada = True
@@ -381,6 +440,7 @@ with tab4:
         _ = st.secrets["gcp_service_account"]
     except:
         service_account_ada = False
+
     if not service_account_ada:
         st.warning("⚠️ Fitur hapus memerlukan Service Account aktif.")
     else:
@@ -408,7 +468,8 @@ with tab4:
                 st.info("Tidak ada data pendapatan.")
         else:
             if dict_pengeluaran:
-                nama_sheet_hapus = st.selectbox("Pilih bulan:", sorted(dict_pengeluaran.keys()), format_func=lambda x: x.replace("Pengeluaran_","").replace("_","-"))
+                nama_sheet_hapus = st.selectbox("Pilih bulan:", sorted(dict_pengeluaran.keys()),
+                    format_func=lambda x: x.replace("Pengeluaran_","").replace("_","-"))
                 df_hapus = dict_pengeluaran[nama_sheet_hapus]
                 def label_e(row):
                     j = f"Rp {row['Jumlah']:,.0f}" if isinstance(row['Jumlah'], (int,float)) else row['Jumlah']
@@ -434,24 +495,23 @@ with tab4:
             else:
                 st.info("Tidak ada data pengeluaran.")
 
+# TAB 5: PENGATURAN
 with tab5:
     st.subheader("⚙️ Pengaturan")
-    with st.expander("📁 Konfigurasi Google Drive", expanded=True):
-        st.markdown(f"""**Folder Struk Anda sudah terhubung!**\n\n- **Folder ID:** `{DRIVE_FOLDER_ID}`\n- **Link folder:** [Buka Google Drive](https://drive.google.com/drive/folders/{DRIVE_FOLDER_ID})\n\n**Cara kerja upload foto:**\n1. Foto akan diupload ke folder bulan (contoh: `2026-06`)\n2. Link foto otomatis tersimpan di Google Sheets\n3. Semua file bisa diakses publik dengan link\n""")
-        if st.button("🔍 Test Koneksi Drive", key="test_drive"):
-            try:
-                creds = get_creds()
-                drive_service = build('drive', 'v3', credentials=creds)
-                folder = drive_service.files().get(fileId=DRIVE_FOLDER_ID, fields='name').execute()
-                st.success(f"✅ Koneksi berhasil! Folder: {folder.get('name')}")
-            except Exception as e:
-                st.error(f"❌ Gagal akses folder: {e}")
-                st.info("Pastikan Service Account sudah di-share ke folder ini dengan akses Editor.")
     with st.expander("🔐 Cara Ubah Password Login"):
-        st.markdown("""Di Streamlit Cloud → **Settings → Secrets**, tambahkan:\n```toml\n[users]\nadmin = "hash_sha256_password_anda"\n```\nGenerate hash di: https://emn178.github.io/online-tools/sha256.html\nDefault: `admin` / `dompetku123`\n""")
-    with st.expander("🛠️ Service Account Configuration"):
-        st.markdown("""Pastikan `secrets.toml` Anda berisi:\n```toml\n[gcp_service_account]\ntype = "service_account"\nproject_id = "proyek-anda"\nprivate_key_id = "..."\nprivate_key = "-----BEGIN PRIVATE KEY-----\\n..."\nclient_email = "nama-sa@proyek.iam.gserviceaccount.com"\nclient_id = "..."\nauth_uri = "https://accounts.google.com/o/oauth2/auth"\ntoken_uri = "https://oauth2.googleapis.com/token"\n```\n""")
+        st.markdown("""
+        Di Streamlit Cloud → **Settings → Secrets**, tambahkan:
+        ```toml
+        [users]
+        admin = "hash_sha256_password_anda"
+        ```
+        Generate hash di: https://emn178.github.io/online-tools/sha256.html
+        Default: `admin` / `dompetku123`
+        """)
 
+# =================================================================
+# 8. TAMBAH TRANSAKSI
+# =================================================================
 st.markdown("---")
 st.subheader("➕ Tambah Transaksi Baru")
 
@@ -470,10 +530,9 @@ with col_c:
 with col_d:
     input_catatan = st.text_input("Keterangan (Opsional)", placeholder="misal: Makan siang")
 
+# Kamera toggle dengan auto-reset
 if "kamera_aktif" not in st.session_state:
     st.session_state["kamera_aktif"] = False
-
-st.info(f"📁 Foto struk akan disimpan di folder Google Drive (bulan {datetime.now().strftime('%Y-%m')})")
 
 aktifkan_kamera = st.toggle("📷 Aktifkan Kamera Struk", value=st.session_state["kamera_aktif"])
 st.session_state["kamera_aktif"] = aktifkan_kamera
@@ -488,23 +547,27 @@ tombol_simpan = st.button("💾 Simpan Transaksi", use_container_width=True, typ
 
 if tombol_simpan:
     if input_jumlah > 0:
-        with st.spinner("Menyimpan transaksi dan upload foto..."):
+        with st.spinner("Menyimpan..."):
             link_struk = ""
             nama_file_struk = ""
             if foto_struk is not None:
                 try:
-                    ok_foto, hasil_foto, nama_file_struk = upload_struk(foto_struk.getvalue(), "image/png", pilihan_jenis, pilihan_kategori, input_catatan if input_catatan else pilihan_kategori)
+                    ok_foto, hasil_foto, nama_file_struk = upload_struk(
+                        foto_struk.getvalue(), "image/png",
+                        pilihan_jenis, pilihan_kategori,
+                        input_catatan if input_catatan else pilihan_kategori
+                    )
                     if ok_foto:
                         link_struk = hasil_foto
-                        st.success(f"📷 Foto terupload: `{nama_file_struk}`")
+                        st.success(f"📷 Foto tersimpan: `{nama_file_struk}`")
                         st.markdown(f"[🔗 Buka di Google Drive]({link_struk})")
                     else:
-                        st.warning(f"⚠️ Foto gagal diupload: {hasil_foto}")
-                        st.info("Transaksi tetap disimpan tanpa foto.")
+                        st.session_state["error_foto"] = f"❌ Foto gagal: {hasil_foto}"
                 except Exception as ex:
-                    st.warning(f"⚠️ Error upload foto: {ex}")
-                    st.info("Transaksi tetap disimpan tanpa foto.")
+                    st.session_state["error_foto"] = f"❌ Error upload foto: {ex}"
+
             ok, pesan = tambah_transaksi(pilihan_jenis, pilihan_kategori, input_jumlah, input_catatan, link_struk)
+
         if ok:
             st.cache_data.clear()
             st.session_state["kamera_aktif"] = False
@@ -514,10 +577,11 @@ if tombol_simpan:
             st.balloons()
             st.rerun()
         else:
-            st.error(f"❌ Gagal simpan ke sheet: {pesan}")
+            st.error(f"❌ Gagal: {pesan}")
     else:
         st.error("⚠️ Nominal harus lebih dari Rp 0!")
 
+# Tampilkan error foto jika ada
 if "error_foto" in st.session_state and st.session_state["error_foto"]:
     st.error(st.session_state["error_foto"])
     if st.button("✕ Tutup pesan error"):
