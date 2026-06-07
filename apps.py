@@ -556,31 +556,26 @@ if tombol_simpan:
             link_struk = ""
             nama_file_struk = ""
             if foto_struk is not None:
-                mime = "image/png"
                 try:
                     ok_foto, hasil_foto, nama_file_struk = upload_struk(
-                        foto_struk.getvalue(), mime,
-                        pilihan_jenis, pilihan_kategori, input_catatan if input_catatan else pilihan_kategori
+                        foto_struk.getvalue(), "image/png",
+                        pilihan_jenis, pilihan_kategori,
+                        input_catatan if input_catatan else pilihan_kategori
                     )
                     if ok_foto:
                         link_struk = hasil_foto
                         st.success(f"📷 Foto tersimpan: `{nama_file_struk}`")
                         st.markdown(f"[🔗 Buka di Google Drive]({link_struk})")
                     else:
-                        st.session_state["error_foto"] = f"❌ Foto gagal diupload: {hasil_foto}"
+                        st.session_state["error_foto"] = f"❌ Foto gagal: {hasil_foto}"
                 except Exception as ex:
                     st.session_state["error_foto"] = f"❌ Error upload foto: {ex}"
 
-# Tampilkan error foto jika ada
-if "error_foto" in st.session_state and st.session_state["error_foto"]:
-    st.error(st.session_state["error_foto"])
-    if st.button("✕ Tutup pesan error"):
-        st.session_state["error_foto"] = ""
-        st.rerun()
             ok, pesan = tambah_transaksi(pilihan_jenis, pilihan_kategori, input_jumlah, input_catatan, link_struk)
+
         if ok:
             st.cache_data.clear()
-            st.session_state["kamera_aktif"] = False  # Matikan kamera otomatis
+            st.session_state["kamera_aktif"] = False
             st.success(f"✅ Tersimpan ke sheet {pesan}!")
             if link_struk:
                 st.markdown(f"📷 [Lihat Foto Struk]({link_struk})")
@@ -590,3 +585,10 @@ if "error_foto" in st.session_state and st.session_state["error_foto"]:
             st.error(f"❌ Gagal: {pesan}")
     else:
         st.error("⚠️ Nominal harus lebih dari Rp 0!")
+
+# Tampilkan error foto jika ada
+if "error_foto" in st.session_state and st.session_state["error_foto"]:
+    st.error(st.session_state["error_foto"])
+    if st.button("✕ Tutup pesan error"):
+        st.session_state["error_foto"] = ""
+        st.rerun()
