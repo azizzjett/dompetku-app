@@ -7,6 +7,9 @@ import plotly.graph_objects as go
 import gspread
 from google.oauth2.service_account import Credentials
 import hashlib
+import io
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
 
 # =================================================================
 # 1. KONFIGURASI UTAMA
@@ -87,6 +90,59 @@ def get_gsheet_client():
         st.error(f"Debug get_gsheet_client: {e}")
         return None
 
+def upload_struk_ke_drive(file_bytes, filename, mime_type):
+    """Upload foto struk ke Google Drive, simpan di folder Struk_Belanja."""
+    try:
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+        drive_service = build('drive', 'v3', credentials=creds)
+
+        # Cari atau buat folder Struk_Belanja
+        folder_name = "Struk_Belanja_Dompetku"
+        query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        results = drive_service.files().list(q=query, fields="files(id, name)").execute()
+        folders = results.get('files', [])
+
+        if folders:
+            folder_id = folders[0]['id']
+        else:
+            folder_metadata = {
+                'name': folder_name,
+                'mimeType': 'application/vnd.google-apps.folder'
+            }
+            folder = drive_service.files().create(body=folder_metadata, fields='id').execute()
+            folder_id = folder['id']
+            # Share folder agar bisa diakses
+            drive_service.permissions().create(
+                fileId=folder_id,
+                body={'type': 'anyone', 'role': 'reader'}
+            ).execute()
+
+        # Upload file ke folder
+        file_metadata = {
+            'name': filename,
+            'parents': [folder_id]
+        }
+        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type)
+        file = drive_service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id, webViewLink'
+        ).execute()
+
+        # Share file agar bisa dilihat via link
+        drive_service.permissions().create(
+            fileId=file['id'],
+            body={'type': 'anyone', 'role': 'reader'}
+        ).execute()
+
+        return True, file['webViewLink']
+    except Exception as e:
+        return False, str(e)
+
 def get_or_create_sheet(spreadsheet, nama_sheet):
     """Ambil sheet jika ada, buat baru jika belum ada."""
     try:
@@ -95,11 +151,11 @@ def get_or_create_sheet(spreadsheet, nama_sheet):
         sheet = spreadsheet.add_worksheet(title=nama_sheet, rows=1000, cols=10)
         # Tambah header
         if nama_sheet == "Pendapatan":
-            sheet.append_row(["Timestamp", "Kategori", "Jumlah", "Catatan"])
+            sheet.append_row(["Timestamp", "Kategori", "Jumlah", "Catatan", "Link_Struk"])
         elif nama_sheet == "Rekap":
             sheet.append_row(["Bulan", "Total Pengeluaran", "Jumlah Transaksi"])
         else:  # Sheet pengeluaran bulanan
-            sheet.append_row(["Timestamp", "Kategori", "Jumlah", "Catatan"])
+            sheet.append_row(["Timestamp", "Kategori", "Jumlah", "Catatan", "Link_Struk"])
         return sheet
 
 def pindahkan_data_ke_sheet_baru(client):
@@ -163,7 +219,7 @@ def hapus_baris(nama_sheet, nomor_baris):
     except Exception as e:
         return False, str(e)
 
-def tambah_transaksi_ke_sheet(jenis, kategori, jumlah, catatan):
+def tambah_transaksi_ke_sheet(jenis, kategori, jumlah, catatan, link_struk=""):
     """Tambah transaksi ke sheet yang sesuai berdasarkan jenis."""
     try:
         client = get_gsheet_client()
@@ -176,12 +232,12 @@ def tambah_transaksi_ke_sheet(jenis, kategori, jumlah, catatan):
         # Tentukan nama sheet berdasarkan jenis transaksi
         if jenis == "Pendapatan":
             nama_sheet = "Pendapatan"
-            header = ["Timestamp", "Kategori", "Jumlah", "Catatan"]
-            baris = [timestamp, kategori, float(jumlah), catatan]
+            header = ["Timestamp", "Kategori", "Jumlah", "Catatan", "Link_Struk"]
+            baris = [timestamp, kategori, float(jumlah), catatan, link_struk]
         else:
             nama_sheet = f"Pengeluaran_{datetime.now().strftime('%Y_%m')}"
-            header = ["Timestamp", "Kategori", "Jumlah", "Catatan"]
-            baris = [timestamp, kategori, float(jumlah), catatan]
+            header = ["Timestamp", "Kategori", "Jumlah", "Catatan", "Link_Struk"]
+            baris = [timestamp, kategori, float(jumlah), catatan, link_struk]
 
         # Buka sheet, buat baru jika belum ada
         try:
@@ -717,17 +773,41 @@ with st.form("form_keuangan", clear_on_submit=True):
         input_jumlah = st.number_input("Nominal Uang (Rp)", min_value=0, value=0, step=5000)
     with col_d:
         input_catatan = st.text_input("Keterangan (Opsional)", placeholder="misal: Makan siang")
+    
+    # Kamera langsung
+    st.markdown("📷 **Foto Struk (Opsional)**")
+    foto_struk = st.camera_input("Arahkan kamera ke struk belanja")
+
     tombol_simpan = st.form_submit_button("💾 Simpan Transaksi", use_container_width=True)
 
 if tombol_simpan:
     if input_jumlah > 0:
         with st.spinner("Menyimpan ke database..."):
+            link_struk = ""
+
+            # Upload foto struk jika ada
+            if foto_struk is not None:
+                with st.spinner("Mengupload foto struk ke Google Drive..."):
+                    nama_file = f"struk_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                    ok_foto, hasil_foto = upload_struk_ke_drive(
+                        foto_struk.getvalue(),
+                        nama_file,
+                        "image/png"
+                    )
+                    if ok_foto:
+                        link_struk = hasil_foto
+                        st.success("📷 Foto struk berhasil diupload!")
+                    else:
+                        st.warning(f"⚠️ Foto gagal diupload: {hasil_foto} — transaksi tetap disimpan.")
+
             ok, pesan = tambah_transaksi_ke_sheet(
-                pilihan_jenis, pilihan_kategori, input_jumlah, input_catatan
+                pilihan_jenis, pilihan_kategori, input_jumlah, input_catatan, link_struk
             )
         if ok:
             st.cache_data.clear()
             st.success("✅ Transaksi berhasil disimpan!")
+            if link_struk:
+                st.markdown(f"📷 [Lihat Foto Struk]({link_struk})")
             st.balloons()
             st.rerun()
         else:
