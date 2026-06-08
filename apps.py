@@ -7,6 +7,8 @@ import gspread
 from google.oauth2.service_account import Credentials
 import hashlib
 import io
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
 
 # =================================================================
 # 1. KONFIGURASI UTAMA
