@@ -7,8 +7,6 @@ import gspread
 from google.oauth2.service_account import Credentials
 import hashlib
 import io
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 
 # =================================================================
 # 1. KONFIGURASI UTAMA
@@ -127,48 +125,39 @@ def hapus_baris(nama_sheet, nomor_baris):
         return False, str(e)
 
 def upload_struk(file_bytes, mime_type, jenis, kategori, catatan):
-    """Upload foto struk ke Google Drive folder milik user (privat)."""
+    """Upload foto struk ke Cloudinary (gratis, privat)."""
     try:
-        FOLDER_ID = "1I63tiJkiUt50E86hjrX7HHjvgC6S-WFH"
+        import cloudinary
+        import cloudinary.uploader
 
-        # Buat nama file otomatis: tanggal_kategori_keterangan
+        # Konfigurasi Cloudinary
+        cloudinary.config(
+            cloud_name="diywfbvxv",
+            api_key="714265914716224",
+            api_secret="zrQyvFcZ8tyeX",
+            secure=True
+        )
+
+        # Buat nama file & folder otomatis
         now = datetime.now()
         tanggal_str = now.strftime('%Y-%m-%d')
         bulan_str = now.strftime('%Y-%m')
         catatan_bersih = catatan.strip().replace('/', '-') if catatan else "tanpa-keterangan"
         kategori_bersih = kategori.replace('/', '-').replace('&', 'dan')
-        ext = "jpg" if "jpeg" in mime_type else "png"
-        nama_file = f"{tanggal_str}_{kategori_bersih}_{catatan_bersih}.{ext}"
+        nama_file = f"{tanggal_str}_{kategori_bersih}_{catatan_bersih}"
+        folder_path = f"Struk_Belanja_Dompetku/{bulan_str}"
 
-        # Konek ke Google Drive API
-        creds = get_creds()
-        drive_service = build('drive', 'v3', credentials=creds)
+        # Upload ke Cloudinary
+        result = cloudinary.uploader.upload(
+            file_bytes,
+            public_id=nama_file,
+            folder=folder_path,
+            resource_type="image",
+            access_mode="authenticated"  # Privat — hanya bisa diakses dengan signed URL
+        )
 
-        # Cari atau buat subfolder per bulan di dalam folder utama
-        query = f"name='{bulan_str}' and mimeType='application/vnd.google-apps.folder' and '{FOLDER_ID}' in parents and trashed=false"
-        results = drive_service.files().list(q=query, fields="files(id)").execute()
-        folders = results.get('files', [])
-
-        if folders:
-            bulan_folder_id = folders[0]['id']
-        else:
-            folder_meta = {
-                'name': bulan_str,
-                'mimeType': 'application/vnd.google-apps.folder',
-                'parents': [FOLDER_ID]
-            }
-            bulan_folder = drive_service.files().create(body=folder_meta, fields='id').execute()
-            bulan_folder_id = bulan_folder['id']
-
-        # Upload file ke subfolder bulan
-        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type)
-        file = drive_service.files().create(
-            body={'name': nama_file, 'parents': [bulan_folder_id]},
-            media_body=media,
-            fields='id, webViewLink'
-        ).execute()
-
-        return True, file['webViewLink'], nama_file
+        link = result.get("secure_url", "")
+        return True, link, nama_file
 
     except Exception as e:
         return False, str(e), ""
