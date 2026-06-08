@@ -134,7 +134,7 @@ def upload_struk(file_bytes, mime_type, jenis, kategori, catatan):
         cloudinary.config(
             cloud_name="diywfbvxv",
             api_key="714265914716224",
-            api_secret="zrQyvFcZ8tyeX",
+            api_secret="zrQyvFcZ8tyeX5F4eL2PS_ul6rY",
             secure=True
         )
 
@@ -145,7 +145,7 @@ def upload_struk(file_bytes, mime_type, jenis, kategori, catatan):
         catatan_bersih = catatan.strip().replace('/', '-') if catatan else "tanpa-keterangan"
         kategori_bersih = kategori.replace('/', '-').replace('&', 'dan')
         nama_file = f"{tanggal_str}_{kategori_bersih}_{catatan_bersih}"
-        folder_path = f"Struk_Belanja_Dompetku/{bulan_str}"
+        folder_path = f"Struk_Belanja_Dompetku/{jenis}/{bulan_str}"
 
         # Upload ke Cloudinary
         result = cloudinary.uploader.upload(
@@ -369,7 +369,28 @@ with tab2:
         df_show = df_pf[kolom_tampil].copy().iloc[::-1].reset_index(drop=True)
         if 'Jumlah' in df_show.columns:
             df_show['Jumlah'] = df_show['Jumlah'].apply(lambda x: f"Rp {x:,.0f}")
-        st.dataframe(df_show, use_container_width=True, height=400)
+
+        # Tampilkan tabel + tombol lihat struk
+        for idx, row in df_show.iterrows():
+            with st.container():
+                col_data, col_btn = st.columns([5, 1])
+                with col_data:
+                    st.markdown(f"""
+                    <div style='background:#1e1e2e;padding:10px 15px;border-radius:8px;margin-bottom:5px;border-left:4px solid #28a745;'>
+                        <small style='color:#aaa;'>{row.get('Timestamp','')}</small><br>
+                        <b>{row.get('Kategori','')}</b> — {row.get('Jumlah','')}
+                        {'<br><small style="color:#ccc;">'+str(row.get('Catatan',''))+'</small>' if row.get('Catatan','') else ''}
+                    </div>
+                    """, unsafe_allow_html=True)
+                with col_btn:
+                    link = row.get('Link_Struk', '')
+                    if link and str(link).startswith('http'):
+                        if st.button("📷 Struk", key=f"p_struk_{idx}"):
+                            st.session_state[f"show_struk_p_{idx}"] = not st.session_state.get(f"show_struk_p_{idx}", False)
+                if st.session_state.get(f"show_struk_p_{idx}", False):
+                    link = row.get('Link_Struk', '')
+                    if link:
+                        st.image(link, caption=f"Struk {row.get('Kategori','')}", use_column_width=True)
     else:
         st.info("Belum ada data pendapatan.")
 
@@ -417,7 +438,29 @@ with tab3:
                 df_show = df_bln[kolom_tampil].copy().iloc[::-1].reset_index(drop=True)
                 if 'Jumlah' in df_show.columns:
                     df_show['Jumlah'] = df_show['Jumlah'].apply(lambda x: f"Rp {x:,.0f}")
-                st.dataframe(df_show, use_container_width=True, height=300)
+
+                # Tampilkan tabel + tombol lihat struk
+                for idx, row in df_show.iterrows():
+                    with st.container():
+                        col_data, col_btn = st.columns([5, 1])
+                        with col_data:
+                            st.markdown(f"""
+                            <div style='background:#1e1e2e;padding:10px 15px;border-radius:8px;margin-bottom:5px;border-left:4px solid #dc3545;'>
+                                <small style='color:#aaa;'>{row.get('Timestamp','')}</small><br>
+                                <b>{row.get('Kategori','')}</b> — {row.get('Jumlah','')}
+                                {'<br><small style="color:#ccc;">'+str(row.get('Catatan',''))+'</small>' if row.get('Catatan','') else ''}
+                            </div>
+                            """, unsafe_allow_html=True)
+                        with col_btn:
+                            link = row.get('Link_Struk', '')
+                            if link and str(link).startswith('http'):
+                                key = f"e_struk_{nama_sheet}_{idx}"
+                                if st.button("📷 Struk", key=key):
+                                    st.session_state[key+"_show"] = not st.session_state.get(key+"_show", False)
+                        if st.session_state.get(f"e_struk_{nama_sheet}_{idx}_show", False):
+                            link = row.get('Link_Struk', '')
+                            if link:
+                                st.image(link, caption=f"Struk {row.get('Kategori','')}", use_column_width=True)
                 st.markdown(f"""<div style='background:#f8d7da;padding:12px 20px;border-radius:8px;border-left:5px solid #dc3545;margin-top:10px;'>
                     <b style='color:#721c24;'>🧮 Total {bulan_list[i]}: Rp {total_bln:,.0f}</b></div>""", unsafe_allow_html=True)
     else:
